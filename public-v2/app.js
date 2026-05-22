@@ -14,12 +14,15 @@ const state = {
   adminTab: "overview",
   historyFriendId: null,
   historyData: null,
+  woodKeyboardOpen: false,
+  toast: "",
   showAddSheet: false,
   addError: "",
 };
 
 // Track which cards are swiped open
 const swipeOpen = new Set();
+let toastTimer = null;
 
 init();
 
@@ -575,6 +578,7 @@ async function openHistory(friendId) {
   state.view = "history";
   state.historyFriendId = friendId;
   state.historyData = null;
+  state.woodKeyboardOpen = false;
   render();
   try {
     state.historyData = await api(`/api/friends/${friendId}/woods`);
@@ -597,8 +601,9 @@ function renderHistory() {
   const userId = state.data?.user?.id;
   const hd = state.historyData;
   const friendId = state.historyFriendId;
+  const friend = currentHistoryFriend();
   const friendName = hd?.friend?.username
-    || state.data?.friends?.find((f) => f.id === friendId)?.username
+    || friend?.username
     || "friend";
 
   app.innerHTML = `
@@ -618,16 +623,87 @@ function renderHistory() {
           </div>
         `}
       </div>
+      ${historyComposerHtml(friend)}
+      ${state.toast ? `<div class="toast">${escHtml(state.toast)}</div>` : ""}
     </div>
   `;
 
   document.querySelector("#back-btn").addEventListener("click", () => {
     state.view = "home";
     state.historyData = null;
+    state.woodKeyboardOpen = false;
     render();
   });
 
+  document.querySelector("#composer-input")?.addEventListener("click", openWoodKeyboard);
+  document.querySelector("#composer-input")?.addEventListener("focus", openWoodKeyboard);
+  document.querySelectorAll("[data-keyboard-open]").forEach((btn) => {
+    btn.addEventListener("click", openWoodKeyboard);
+  });
+  document.querySelector("#wood-key")?.addEventListener("click", sendHistoryWood);
+  document.querySelector("#history-messages")?.addEventListener("click", () => {
+    if (state.woodKeyboardOpen) {
+      state.woodKeyboardOpen = false;
+      renderHistory();
+    }
+  });
+
   if (hd) scrollHistoryToBottom();
+}
+
+function currentHistoryFriend() {
+  return state.data?.friends?.find((friend) => friend.id === state.historyFriendId) || null;
+}
+
+function historyComposerHtml(friend) {
+  const cooldown = friend?.wood?.cooldownExpiresAt;
+  const keyHint = cooldown ? `Cooldown ${countdown(cooldown)}` : "Send Wood";
+  return `
+    <div class="history-composer-wrap ${state.woodKeyboardOpen ? "keyboard-open" : ""}">
+      <div class="history-composer">
+        <button class="composer-icon" type="button" data-keyboard-open title="Camera">📷</button>
+        <button class="composer-input" id="composer-input" type="button" aria-label="Message">
+          <span class="composer-placeholder">Message</span>
+          <span class="fake-cursor"></span>
+        </button>
+        <button class="composer-icon" type="button" data-keyboard-open title="Mic">🎙</button>
+      </div>
+      ${state.woodKeyboardOpen ? `
+        <div class="wood-keyboard">
+          <button class="wood-key ${cooldown ? "cooldown" : ""}" id="wood-key" type="button">
+            <span>🪵</span>
+            <small>${escHtml(keyHint)}</small>
+          </button>
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
+function openWoodKeyboard() {
+  if (state.woodKeyboardOpen) return;
+  state.woodKeyboardOpen = true;
+  renderHistory();
+}
+
+async function sendHistoryWood() {
+  const friendId = state.historyFriendId;
+  const friend = currentHistoryFriend();
+  if (!friend?.wood?.canWood) {
+    const wait = friend?.wood?.cooldownExpiresAt ? countdown(friend.wood.cooldownExpiresAt) : "a bit";
+    showToast(`On cooldown for ${wait}`);
+    return;
+  }
+
+  try {
+    state.data = await api(`/api/friends/${friendId}/wood`, { method: "POST", body: { holdMs: 0 } });
+    state.historyData = await api(`/api/friends/${friendId}/woods`);
+    state.error = "";
+    renderHistory();
+    scrollHistoryToBottom();
+  } catch (err) {
+    showToast(humanErr(err.message));
+  }
 }
 
 function historyMessagesHtml(woods, userId, friendName) {
@@ -1150,6 +1226,16 @@ function escHtml(v) {
 
 function humanErr(v) {
   return String(v).replaceAll("_", " ");
+}
+
+function showToast(message) {
+  state.toast = message;
+  clearTimeout(toastTimer);
+  render();
+  toastTimer = setTimeout(() => {
+    state.toast = "";
+    if (state.session?.user) render();
+  }, 2200);
 }
 
 function without(object, keys) {
