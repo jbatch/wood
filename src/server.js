@@ -94,7 +94,13 @@ async function handleRequest(req, res) {
   }
 
   const didServe = await serveStatic(req, res, publicDir);
-  if (!didServe) await serveStatic({ ...req, url: "/" }, res, publicDir);
+  if (didServe) return;
+
+  const didServeFallback = await serveStatic({ ...req, url: "/" }, res, publicDir);
+  if (!didServeFallback) {
+    res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+    res.end("Not found");
+  }
 }
 
 async function handleApi(req, res, url) {

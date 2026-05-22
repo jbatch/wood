@@ -22,6 +22,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY package.json package-lock.json ./
 COPY src ./src
 COPY public ./public
+COPY public-v2 ./public-v2
 COPY docs ./docs
 
 RUN mkdir -p /app/data && chown -R node:node /app
