@@ -4,70 +4,14 @@ const STREAK_WINDOW_MS = 24 * 60 * 60 * 1000;
 const STREAK_INCREMENT_MIN_MS = 20 * 60 * 60 * 1000;
 const STREAK_BREAK_MS = 48 * 60 * 60 * 1000;
 const STREAK_MILESTONES = [7, 30, 100, 365];
-const WOOD_NOTIFICATION_TITLES = [
-  "Wood",
-  "{wood}",
-  "Incoming Wood",
-  "You got Wood",
-  "Knock knock",
-  "Wood delivery",
-  "A Wood appears",
-];
-const WOOD_NOTIFICATION_BODIES = [
-  "{sender} wooded you",
-  "{sender} sent you {wood}",
-  "You got Wood",
-  "You've got Wood",
-  "Wood.",
-  "{sender}: Wood?",
-  "Important Wood delivery from {sender}",
-  "{sender} has entered the Wood",
-  "Breaking: {sender} sent Wood",
-  "One fresh {wood} from {sender}",
-  "{sender} pressed the Wood button",
-  "Look alive. {sender} sent Wood",
-  "This is not a drill. It is Wood.",
-  "{sender} says: Wood",
-  "Wood acquired.",
-  "Your Wood has arrived.",
-  "{sender} would like to talk about Wood",
-  "Someone sent Wood. It was {sender}.",
-  "Today's forecast: Wood from {sender}",
-  "Ping. Wood.",
-  "{sender} did a Wood",
-  "{sender}, what did you do? Wood.",
-  "New Wood just dropped.",
-  "A single Wood, courtesy of {sender}.",
-  "The Wood has been summoned.",
-  "{sender} is thinking about Wood.",
-  "You have been Wooded.",
-];
-const WOOD_NOTIFICATION_STYLES = [
-  {
-    id: "classic",
-    icon: "/notifications/wood-classic.png",
-  },
-  {
-    id: "mail",
-    icon: "/notifications/wood-mail.png",
-  },
-  {
-    id: "alert",
-    icon: "/notifications/wood-alert.png",
-    vibrate: [80, 35, 120],
-  },
-  {
-    id: "long",
-    icon: "/notifications/wood-long.png",
-  },
-  {
-    id: "summon",
-    icon: "/notifications/wood-summon.png",
-    vibrate: [40, 30, 40, 30, 120],
-  },
-];
 
 import { id } from "./ids.js";
+import {
+  WOOD_NOTIFICATION_BODIES,
+  WOOD_NOTIFICATION_PRESETS,
+  WOOD_NOTIFICATION_STYLES,
+  WOOD_NOTIFICATION_TITLES,
+} from "./notificationCopy.js";
 
 export function getAcceptedFriendIds(db, userId) {
   return db.friendships
@@ -176,6 +120,15 @@ export function woodNotification({
     return {
       title: wood,
       body: applyWoodTemplate(seasonal.notification, { sender, wood }),
+      ...style,
+    };
+  }
+
+  const preset = randomItem(WOOD_NOTIFICATION_PRESETS);
+  if (preset) {
+    return {
+      title: applyWoodTemplate(preset.title, { sender, wood }),
+      body: applyWoodTemplate(preset.body, { sender, wood }),
       ...style,
     };
   }

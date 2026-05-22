@@ -11,6 +11,11 @@ import {
   woodNotification,
   woodVariant,
 } from "../src/woodRules.js";
+import {
+  WOOD_NOTIFICATION_BODIES,
+  WOOD_NOTIFICATION_PRESETS,
+  WOOD_NOTIFICATION_TITLES,
+} from "../src/notificationCopy.js";
 
 function dbWithWoods(woods = []) {
   return {
@@ -265,4 +270,10 @@ test("notification styles expose generated PNG variants", () => {
     notificationStyles().map((style) => style.id),
     ["classic", "mail", "alert", "long", "summon"],
   );
+});
+
+test("notification copy has a large backend-owned template pool", () => {
+  assert.ok(WOOD_NOTIFICATION_TITLES.length >= 80);
+  assert.ok(WOOD_NOTIFICATION_BODIES.length >= 200);
+  assert.ok(WOOD_NOTIFICATION_PRESETS.length >= 70);
 });
