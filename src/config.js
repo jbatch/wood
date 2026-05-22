@@ -24,6 +24,7 @@ export const config = {
   vapidPrivateKey: process.env.WOOD_VAPID_PRIVATE_KEY || "",
   vapidSubject:
     process.env.WOOD_VAPID_SUBJECT || "mailto:admin@example.com",
+  ui: process.env.WOOD_UI || "v1",
 };
 
 function loadDotEnv(file) {

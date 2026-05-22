@@ -8,7 +8,7 @@
     "start": "node src/server.js",
     "dev": "WOOD_DEV=1 node src/server.js",
     "assets:notifications": "node scripts/generate-notification-assets.js",
-    "test": "node --test"
+    "test": "node --test test"
   },
   "optionalDependencies": {
     "web-push": "^3.6.7"

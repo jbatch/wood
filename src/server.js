@@ -43,7 +43,7 @@ import { serveStatic } from "./static.js";
 import { debugEntries, debugLog, endpointHost } from "./debugLog.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const publicDir = path.join(__dirname, "..", "public");
+const publicDir = path.join(__dirname, "..", config.ui === "v2" ? "public-v2" : "public");
 const store = await createStore();
 
 const requestListener = async (req, res) => {
@@ -170,6 +170,36 @@ async function handleApi(req, res, url) {
   );
   if (req.method === "POST" && friendAction) {
     await handleFriendAction(user, res, friendAction[1], friendAction[2], body);
+    return;
+  }
+
+  const woodHistory = url.pathname.match(/^\/api\/friends\/([^/]+)\/woods$/);
+  if (req.method === "GET" && woodHistory) {
+    const friendId = woodHistory[1];
+    const db = store.db;
+    const friendship = findFriendship(db, user.id, friendId);
+    if (!friendship || friendship.status !== "accepted") {
+      sendJson(res, 404, { error: "not_found" });
+      return;
+    }
+    const woods = db.woods
+      .filter(
+        (wood) =>
+          (wood.sender_id === user.id && wood.recipient_id === friendId) ||
+          (wood.sender_id === friendId && wood.recipient_id === user.id),
+      )
+      .sort((a, b) => new Date(a.sent_at) - new Date(b.sent_at))
+      .slice(-200)
+      .map((wood) => ({
+        id: wood.id,
+        senderId: wood.sender_id,
+        sentAt: wood.sent_at,
+        label: wood.label || "Wood",
+        type: wood.type || "normal",
+        streakCountAfter: wood.streak_count_after,
+      }));
+    const friend = db.users.find((candidate) => candidate.id === friendId);
+    sendJson(res, 200, { woods, friend: friend ? publicUser(friend) : null });
     return;
   }
 
