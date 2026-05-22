@@ -374,6 +374,7 @@ const SWIPE_VELOCITY_THRESHOLD = 0.3; // px/ms
 function bindFriendCard(card) {
   const friendId = card.dataset.friend;
   const canWood = card.dataset.canWood === "true";
+  const item = card.closest(".friend-item");
 
   let startX = 0, startY = 0, startTime = 0;
   let currentX = 0;
@@ -387,6 +388,7 @@ function bindFriendCard(card) {
   function setTranslate(dx, animated = false) {
     card.style.transition = animated ? "transform 280ms cubic-bezier(0.32, 0.72, 0, 1)" : "none";
     card.style.transform = `translateX(${dx}px)`;
+    item?.classList.toggle("tray-visible", dx < -1);
   }
 
   function snapOpen(animated = true) {
@@ -431,6 +433,7 @@ function bindFriendCard(card) {
       clearTimeout(holdTimer);
       isHolding = false;
       card.classList.remove("holding");
+      card.classList.add("swiping");
     }
 
     if (isSwiping) {
@@ -475,6 +478,7 @@ function bindFriendCard(card) {
         await mutate(`/api/friends/${friendId}/wood`, { holdMs: 0 });
       }
     }
+    card.classList.remove("swiping");
     isSwiping = false;
     isHolding = false;
   });
@@ -482,6 +486,7 @@ function bindFriendCard(card) {
   card.addEventListener("pointercancel", () => {
     clearTimeout(holdTimer);
     card.classList.remove("holding");
+    card.classList.remove("swiping");
     isOpen() ? snapOpen() : snapClosed();
     isSwiping = false;
     isHolding = false;
@@ -491,13 +496,14 @@ function bindFriendCard(card) {
 // Close open swipe cards when tapping elsewhere
 document.addEventListener("pointerdown", (e) => {
   if (swipeOpen.size === 0) return;
-  const card = e.target.closest(".friend-item");
+  const item = e.target.closest(".friend-item");
   swipeOpen.forEach((id) => {
-    if (!card || card.dataset.friendId !== id) {
+    if (!item || item.dataset.friendId !== id) {
       const fc = document.querySelector(`#fc-${id}`);
       if (fc) {
         fc.style.transition = "transform 280ms cubic-bezier(0.32, 0.72, 0, 1)";
         fc.style.transform = "translateX(0)";
+        fc.closest(".friend-item")?.classList.remove("tray-visible");
         swipeOpen.delete(id);
       }
     }

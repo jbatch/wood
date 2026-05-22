@@ -49,10 +49,34 @@ html, body {
   overscroll-behavior: none;
 }
 
+/* On wide screens, show a phone-shaped column centred on a darker canvas */
+@media (min-width: 540px) {
+  body {
+    background: #060e08;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 32px 0 32px;
+  }
+}
+
 #app {
   min-height: 100%;
   display: flex;
   flex-direction: column;
+  width: 100%;
+}
+
+@media (min-width: 540px) {
+  #app {
+    min-height: calc(100vh - 64px);
+    max-width: 480px;
+    width: 480px;
+    border-radius: 40px;
+    overflow: hidden;
+    box-shadow: 0 32px 80px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.06);
+    background: var(--bg);
+  }
 }
 
 /* ─── Auth ─────────────────────────────────────────────── */
@@ -306,17 +330,30 @@ html, body {
   position: relative;
   border-radius: var(--radius);
   overflow: hidden;
+  background: var(--surface-raised);
+  /* Force GPU compositing so overflow:hidden correctly clips animated children */
+  transform: translateZ(0);
+  isolation: isolate;
 }
 
 /* Revealed action tray behind the card */
 .friend-tray {
   position: absolute;
   inset: 0;
+  z-index: 0;
   display: flex;
   align-items: stretch;
   justify-content: flex-end;
   border-radius: var(--radius);
   overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 80ms ease;
+}
+
+.friend-item.tray-visible .friend-tray {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .tray-btn {
@@ -365,15 +402,21 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  width: 100%;
   padding: 16px 18px;
   background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  /* No border-radius — the parent clips to its own border-radius via overflow:hidden.
+     Any border-radius here would create transparent corner pixels that let the tray
+     colour bleed through regardless of z-index. */
   cursor: pointer;
   touch-action: pan-y;
   user-select: none;
-  will-change: transform;
   transition: background 120ms ease;
+}
+
+.friend-card.swiping {
+  will-change: transform;
 }
 
 .friend-card.can-wood {
