@@ -550,6 +550,52 @@ html, body {
 .status-dot.muted    { background: var(--text-faint); }
 .status-dot.reply    { background: var(--accent); animation: dotPulse 1.4s ease-in-out infinite; }
 
+.group-card {
+  cursor: pointer;
+}
+
+.group-pending {
+  margin-top: 3px;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.group-picker {
+  display: grid;
+  gap: 8px;
+  max-height: 210px;
+  overflow: auto;
+}
+
+.group-choice {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-weight: 750;
+}
+
+.group-choice input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--accent);
+}
+
+.group-empty {
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
 @keyframes dotPulse {
   0%, 100% { box-shadow: 0 0 0 0 var(--accent-glow); }
   50%       { box-shadow: 0 0 0 5px rgba(62, 214, 105, 0); }

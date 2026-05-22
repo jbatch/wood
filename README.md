@@ -10,6 +10,8 @@ This repo is a small v1 implementation built to match the PRD:
 - exact-username friend requests, accept/reject/remove/block/mute
 - directional Wood cooldowns that clear when the recipient Woods back
 - pair streaks plus personal and friend-pair stats
+- achievements with unlock notifications and admin awards
+- Wood groups with invite-based membership and per-sender group cooldowns
 - SQLite persistence with legacy JSON import
 - PWA manifest, service worker, push subscription storage
 - optional Web Push delivery via `web-push` and VAPID keys

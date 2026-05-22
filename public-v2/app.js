@@ -18,6 +18,8 @@ const state = {
   toast: "",
   showAddSheet: false,
   addError: "",
+  showGroupSheet: false,
+  groupError: "",
 };
 
 // Track which cards are swiped open
@@ -35,6 +37,7 @@ async function init() {
   if (state.session.user) {
     const params = new URLSearchParams(location.search);
     if (params.get("tab") === "stats") state.homeTab = "stats";
+    if (params.get("tab") === "groups") state.homeTab = "groups";
     await loadApp();
     startPolling();
   }
@@ -128,7 +131,10 @@ function renderHome() {
       </header>
 
       <div class="scroll-content" id="scroll-area">
-        ${state.homeTab === "stats" ? homeStatsHtml(d) : `
+        ${state.homeTab === "stats" ? homeStatsHtml(d) : state.homeTab === "groups" ? `
+          ${groupInvitesHtml(d.groupInvites || [])}
+          ${groupsListHtml(d.groups || [])}
+        ` : `
           ${statsBarHtml(d.stats)}
           ${requestsHtml(d)}
           ${friendsListHtml(d.friends)}
@@ -138,6 +144,7 @@ function renderHome() {
 
       ${mainNavHtml()}
       ${state.showAddSheet ? addSheetHtml() : ""}
+      ${state.showGroupSheet ? groupSheetHtml(d.friends || []) : ""}
     </div>
   `;
 
@@ -212,8 +219,11 @@ function mainNavHtml() {
       <button class="tab-btn ${state.homeTab === "stats" ? "active" : ""}" data-home-tab="stats">
         <span class="tab-icon">◆</span><span>Stats</span>
       </button>
+      <button class="tab-btn ${state.homeTab === "groups" ? "active" : ""}" data-home-tab="groups">
+        <span class="tab-icon">◎</span><span>Groups</span>
+      </button>
       <button class="tab-btn primary-tab" data-action="add-friend">
-        <span class="tab-icon">＋</span><span>Add</span>
+        <span class="tab-icon">＋</span><span>${state.homeTab === "groups" ? "Group" : "Add"}</span>
       </button>
       ${isAdmin ? `
         <button class="tab-btn" data-route="/admin">
@@ -266,6 +276,71 @@ function friendsListHtml(friends) {
     <div class="section-head">Friends</div>
     <div class="friends-list">
       ${friends.map(friendCardHtml).join("")}
+    </div>
+  `;
+}
+
+function groupInvitesHtml(invites) {
+  if (!invites.length) return "";
+  return `
+    <div class="section-head">Group invites</div>
+    <div class="request-list">
+      ${invites.map((invite) => `
+        <div class="request-card">
+          <div class="request-info">
+            <div class="request-name">${escHtml(invite.group.name)}</div>
+            <div class="request-hint">${invite.invitedBy ? escHtml(invite.invitedBy.username) : "Someone"} invited you</div>
+          </div>
+          <div class="request-actions">
+            <button class="btn-accept" data-group-invite="${invite.id}" data-group-reply="accept">Accept</button>
+            <button class="btn-reject" data-group-invite="${invite.id}" data-group-reply="decline">Decline</button>
+          </div>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function groupsListHtml(groups) {
+  if (!groups.length) {
+    return `
+      <div class="empty-state">
+        <div class="empty-emoji">◎</div>
+        <p>Create a group and Wood the room</p>
+      </div>
+    `;
+  }
+  return `
+    <div class="section-head">Groups</div>
+    <div class="friends-list">
+      ${groups.map(groupCardHtml).join("")}
+    </div>
+  `;
+}
+
+function groupCardHtml(group) {
+  const cooldown = group.wood?.cooldownExpiresAt;
+  const meta = cooldown
+    ? `<span class="cooldown-label">${countdown(cooldown)}</span>`
+    : group.wood?.needsReply
+      ? `<span class="reply-label">someone wooded back</span>`
+      : `<span>${group.members.length} members · ${group.stats.woods_sent} Woods</span>`;
+  const dot = cooldown
+    ? `<span class="status-dot cooldown"></span>`
+    : `<span class="status-dot ready"></span>`;
+  return `
+    <div class="friend-item">
+      <div class="friend-card group-card ${cooldown ? "on-cooldown" : "can-wood"}" data-group="${group.id}" data-can-wood="${group.wood?.canWood}">
+        <div class="friend-left">
+          <div class="friend-name">${escHtml(group.name)}</div>
+          <div class="friend-meta">${meta}</div>
+          ${group.pendingMembers.length ? `<div class="group-pending">${group.pendingMembers.length} pending</div>` : ""}
+        </div>
+        <div class="friend-right">
+          <span class="streak-badge">${group.members.length}</span>
+          ${dot}
+        </div>
+      </div>
     </div>
   `;
 }
@@ -365,6 +440,35 @@ function addSheetHtml() {
   `;
 }
 
+function groupSheetHtml(friends) {
+  return `
+    <div class="sheet-overlay" id="group-sheet-overlay">
+      <div class="sheet" id="group-sheet">
+        <div class="sheet-title">Create group</div>
+        <form id="group-form" autocomplete="off">
+          <div class="sheet-field">
+            <div class="field-label">Group name</div>
+            <input class="field-input" name="name" required maxlength="40" placeholder="Friday Woods" />
+          </div>
+          <div class="sheet-field">
+            <div class="field-label">Invite friends</div>
+            <div class="group-picker">
+              ${friends.length ? friends.map((friend) => `
+                <label class="group-choice">
+                  <input type="checkbox" name="memberIds" value="${escHtml(friend.id)}" />
+                  <span>${escHtml(friend.username)}</span>
+                </label>
+              `).join("") : `<div class="group-empty">Add friends before making a group</div>`}
+            </div>
+          </div>
+          <div class="sheet-error">${escHtml(state.groupError)}</div>
+          <button class="btn-primary" type="submit" ${friends.length ? "" : "disabled"}>Send invites</button>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
 function pushBtnHtml() {
   const s = state.pushStatus;
   if (!s || !state.data?.push?.enabled) return "";
@@ -403,15 +507,26 @@ function bindHome() {
   });
 
   document.querySelector("[data-action='add-friend']")?.addEventListener("click", () => {
-    state.showAddSheet = true;
-    state.addError = "";
+    if (state.homeTab === "groups") {
+      state.showGroupSheet = true;
+      state.groupError = "";
+    } else {
+      state.showAddSheet = true;
+      state.addError = "";
+    }
     renderHome();
-    setTimeout(() => document.querySelector("#add-input")?.focus(), 50);
+    setTimeout(() => document.querySelector("#add-input, #group-sheet input")?.focus(), 50);
   });
 
   document.querySelector("#sheet-overlay")?.addEventListener("click", (e) => {
     if (e.target.id === "sheet-overlay") {
       state.showAddSheet = false;
+      renderHome();
+    }
+  });
+  document.querySelector("#group-sheet-overlay")?.addEventListener("click", (e) => {
+    if (e.target.id === "group-sheet-overlay") {
+      state.showGroupSheet = false;
       renderHome();
     }
   });
@@ -429,10 +544,41 @@ function bindHome() {
       document.querySelector(".sheet-error").textContent = state.addError;
     }
   });
+  document.querySelector("#group-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const form = new FormData(e.currentTarget);
+    const memberIds = form.getAll("memberIds");
+    try {
+      state.data = await api("/api/groups", {
+        method: "POST",
+        body: { name: form.get("name"), memberIds },
+      });
+      state.error = "";
+      state.showGroupSheet = false;
+      render();
+    } catch (err) {
+      state.groupError = humanErr(err.message);
+      document.querySelector("#group-sheet .sheet-error").textContent = state.groupError;
+    }
+  });
 
   document.querySelectorAll("[data-request]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       await mutate(`/api/friend-requests/${btn.dataset.request}/${btn.dataset.reply}`);
+    });
+  });
+  document.querySelectorAll("[data-group-invite]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await mutate(`/api/groups/invites/${btn.dataset.groupInvite}/${btn.dataset.groupReply}`);
+    });
+  });
+
+  document.querySelectorAll("[data-group]").forEach((card) => {
+    card.addEventListener("click", async () => {
+      if (card.dataset.canWood !== "true") return;
+      card.classList.add("wood-sent");
+      card.addEventListener("animationend", () => card.classList.remove("wood-sent"), { once: true });
+      await mutate(`/api/groups/${card.dataset.group}/wood`, { holdMs: 0 });
     });
   });
 
@@ -451,7 +597,7 @@ function bindHome() {
   });
 
   // Bind swipe + tap on each friend card
-  document.querySelectorAll(".friend-card").forEach(bindFriendCard);
+  document.querySelectorAll(".friend-card:not(.group-card)").forEach(bindFriendCard);
 }
 
 // ─── Friend card: swipe + tap + long press ───────────────
@@ -462,6 +608,7 @@ const SWIPE_VELOCITY_THRESHOLD = 0.3; // px/ms
 
 function bindFriendCard(card) {
   const friendId = card.dataset.friend;
+  if (!friendId) return;
   const canWood = card.dataset.canWood === "true";
   const item = card.closest(".friend-item");
 
@@ -860,6 +1007,7 @@ function renderAdmin() {
 function adminPanelHtml() {
   if (state.adminTab === "invites") return adminInvitesHtml();
   if (state.adminTab === "users") return adminUsersHtml();
+  if (state.adminTab === "groups") return adminGroupsHtml();
   if (state.adminTab === "debug") return adminDebugHtml();
   return adminOverviewHtml();
 }
@@ -869,6 +1017,7 @@ function adminNavHtml() {
     ["overview", "●", "Overview"],
     ["invites", "＋", "Invites"],
     ["users", "◆", "Users"],
+    ["groups", "◎", "Groups"],
     ["debug", "⋯", "Debug"],
   ];
   return `
@@ -980,6 +1129,33 @@ function userCardHtml(user) {
         <button class="chip-btn accent" data-user="${user.id}" data-admin-action="test-push">Push</button>
         <button class="chip-btn" data-user="${user.id}" data-admin-action="${user.suspended ? "unsuspend" : "suspend"}">${user.suspended ? "Unsuspend" : "Suspend"}</button>
         <button class="chip-btn" data-user="${user.id}" data-admin-action="${user.role === "admin" ? "demote" : "promote"}">${user.role === "admin" ? "Demote" : "Promote"}</button>
+      </div>
+    </div>
+  `;
+}
+
+function adminGroupsHtml() {
+  const groups = state.admin.groups || [];
+  return `
+    <div class="section-head">Groups</div>
+    <div class="admin-list">
+      ${groups.length ? groups.map(adminGroupCardHtml).join("") : `<div class="empty-state small-empty"><p>No groups yet</p></div>`}
+    </div>
+  `;
+}
+
+function adminGroupCardHtml(group) {
+  return `
+    <div class="admin-card user-card">
+      <div class="admin-card-main">
+        <div class="admin-title">${escHtml(group.name)} ${group.dissolved_at ? `<span class="role-chip">dissolved</span>` : ""}</div>
+        <div class="admin-sub">${group.members.map((member) => escHtml(member.username)).join(", ") || "No members"}</div>
+        <div class="admin-meta">
+          ${group.members.length} members · ${group.pendingMembers.length} pending · ${group.stats.woods_sent} Woods
+        </div>
+      </div>
+      <div class="admin-actions">
+        ${group.dissolved_at ? "" : `<button class="chip-btn danger-chip" data-dissolve-group="${group.id}">Dissolve</button>`}
       </div>
     </div>
   `;
@@ -1104,6 +1280,13 @@ function bindAdmin() {
         method: "POST",
         body: { slug: select?.value },
       });
+      await loadApp();
+      renderAdmin();
+    });
+  });
+  document.querySelectorAll("[data-dissolve-group]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      state.admin = await api(`/api/admin/groups/${btn.dataset.dissolveGroup}/dissolve`, { method: "POST" });
       await loadApp();
       renderAdmin();
     });

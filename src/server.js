@@ -44,6 +44,16 @@ import {
   woodNotification,
   woodVariant,
 } from "./woodRules.js";
+import {
+  canCreateGroupWith,
+  canSendGroupWood,
+  groupMembers,
+  groupStats,
+  groupWoods,
+  pendingGroupInvites,
+  visibleGroups,
+  visibleGroupWoodState,
+} from "./groupRules.js";
 import { notifyUser, pushPublicConfig } from "./push.js";
 import { serveStatic } from "./static.js";
 import { debugEntries, debugLog, endpointHost } from "./debugLog.js";
@@ -160,6 +170,31 @@ async function handleApi(req, res, url) {
 
   if (req.method === "POST" && url.pathname === "/api/friend-requests") {
     await requestFriend(user, res, body);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/groups") {
+    await createGroup(user, res, body);
+    return;
+  }
+
+  const groupInviteAction = url.pathname.match(
+    /^\/api\/groups\/invites\/([^/]+)\/(accept|decline)$/,
+  );
+  if (req.method === "POST" && groupInviteAction) {
+    await respondToGroupInvite(user, res, groupInviteAction[1], groupInviteAction[2]);
+    return;
+  }
+
+  const groupWoodAction = url.pathname.match(/^\/api\/groups\/([^/]+)\/wood$/);
+  if (req.method === "POST" && groupWoodAction) {
+    await sendGroupWood(user, res, groupWoodAction[1], body);
+    return;
+  }
+
+  const groupHistory = url.pathname.match(/^\/api\/groups\/([^/]+)\/woods$/);
+  if (req.method === "GET" && groupHistory) {
+    await groupWoodHistory(user, res, groupHistory[1]);
     return;
   }
 
@@ -332,6 +367,19 @@ function appState(user) {
     stats: userStats(db, user.id),
     achievements: achievementProgress(db, user.id),
     friends,
+    groups: visibleGroups(db, user.id).map((group) => publicGroup(group, user.id)),
+    groupInvites: pendingGroupInvites(db, user.id)
+      .map((member) => {
+        const group = db.groups.find((candidate) => candidate.id === member.group_id);
+        if (!group || group.dissolved_at) return null;
+        return {
+          id: member.id,
+          group: publicGroup(group, user.id),
+          invitedBy: publicUser(db.users.find((candidate) => candidate.id === member.invited_by)),
+          created_at: member.created_at,
+        };
+      })
+      .filter(Boolean),
     incomingRequests: db.friendships
       .filter(
         (friendship) =>
@@ -397,6 +445,84 @@ async function savePushSubscription(user, body) {
       endpointHost: endpointHost(endpoint),
     });
   });
+}
+
+async function createGroup(user, res, body) {
+  const name = cleanGroupName(body.name);
+  const memberIds = Array.isArray(body.memberIds) ? body.memberIds.map(String) : [];
+  if (!name) {
+    sendJson(res, 400, { error: "invalid_group_name" });
+    return;
+  }
+  const memberState = canCreateGroupWith(store.db, user.id, memberIds);
+  if (!memberState.ok) {
+    sendJson(res, 400, { error: memberState.reason });
+    return;
+  }
+
+  const group = await store.write((db) => {
+    const now = nowIso();
+    const entry = {
+      id: id("group"),
+      name,
+      created_by: user.id,
+      created_at: now,
+      dissolved_at: null,
+    };
+    db.groups.push(entry);
+    db.group_members.push({
+      id: id("group_member"),
+      group_id: entry.id,
+      user_id: user.id,
+      invited_by: user.id,
+      status: "accepted",
+      created_at: now,
+      updated_at: now,
+    });
+    for (const memberId of memberState.memberIds) {
+      db.group_members.push({
+        id: id("group_member"),
+        group_id: entry.id,
+        user_id: memberId,
+        invited_by: user.id,
+        status: "pending",
+        created_at: now,
+        updated_at: now,
+      });
+    }
+    return entry;
+  });
+
+  for (const memberId of memberState.memberIds) {
+    await notifyUser(store.db, memberId, {
+      title: "Wood group",
+      body: `${user.username} invited you to ${group.name}`,
+      url: "/?tab=groups",
+      groupId: group.id,
+    });
+  }
+
+  sendJson(res, 201, appState(user));
+}
+
+async function respondToGroupInvite(user, res, membershipId, action) {
+  const result = await store.write((db) => {
+    const membership = db.group_members.find(
+      (member) =>
+        member.id === membershipId &&
+        member.user_id === user.id &&
+        member.status === "pending",
+    );
+    if (!membership) return { error: "not_found" };
+    membership.status = action === "accept" ? "accepted" : "declined";
+    membership.updated_at = nowIso();
+    return { membership };
+  });
+  if (result.error) {
+    sendJson(res, 404, { error: result.error });
+    return;
+  }
+  sendJson(res, 200, appState(user));
 }
 
 async function requestFriend(user, res, body) {
@@ -634,6 +760,107 @@ async function sendWood(user, res, recipientId, body) {
   sendJson(res, 201, appState(user));
 }
 
+async function sendGroupWood(user, res, groupId, body) {
+  const group = store.db.groups.find((candidate) => candidate.id === groupId);
+  if (!group || group.dissolved_at) {
+    sendJson(res, 404, { error: "not_found" });
+    return;
+  }
+
+  const state = canSendGroupWood(store.db, user.id, groupId);
+  if (!state.ok) {
+    sendJson(res, state.reason === "cooldown" ? 409 : 404, {
+      error: state.reason,
+      expiresAt: state.expiresAt,
+    });
+    return;
+  }
+
+  const seasonal = seasonalTheme(store.db);
+  const holdMs = Number(body.holdMs || 0);
+  const variant = woodVariant({ holdMs, seasonal });
+  const wood = await store.write((db) => {
+    const entry = {
+      id: id("group_wood"),
+      group_id: groupId,
+      sender_id: user.id,
+      sent_at: nowIso(),
+      type: variant.type,
+      label: variant.label,
+      hold_duration_ms: holdMs,
+    };
+    db.group_woods.push(entry);
+    return entry;
+  });
+
+  const notification = woodNotification({
+    sender: `${user.username} in ${group.name}`,
+    wood: variant.label,
+    seasonal,
+  });
+  const recipients = groupMembers(store.db, groupId)
+    .map((member) => member.user_id)
+    .filter((memberId) => memberId !== user.id);
+  for (const recipientId of recipients) {
+    const result = await notifyUser(store.db, recipientId, {
+      title: notification.title,
+      body: notification.body,
+      icon: notification.icon,
+      badge: notification.badge,
+      vibrate: notification.vibrate,
+      actions: notification.actions,
+      styleId: notification.id,
+      url: `/?tab=groups&group=${encodeURIComponent(groupId)}`,
+      groupId,
+      woodId: wood.id,
+    });
+    if (result.stale.length) {
+      await store.write((db) => {
+        db.push_subs = db.push_subs.filter((sub) => !result.stale.includes(sub.id));
+      });
+    }
+  }
+
+  debugLog("group_wood.created", {
+    woodId: wood.id,
+    groupId,
+    groupName: group.name,
+    senderId: user.id,
+    senderUsername: user.username,
+    recipients: recipients.length,
+    type: variant.type,
+  });
+  sendJson(res, 201, appState(user));
+}
+
+async function groupWoodHistory(user, res, groupId) {
+  const state = canSendGroupWood(store.db, user.id, groupId);
+  if (!state.ok && state.reason === "not_found") {
+    sendJson(res, 404, { error: "not_found" });
+    return;
+  }
+  if (state.reason === "not_member") {
+    sendJson(res, 404, { error: "not_found" });
+    return;
+  }
+  const group = store.db.groups.find((candidate) => candidate.id === groupId);
+  const users = new Map(store.db.users.map((candidate) => [candidate.id, publicUser(candidate)]));
+  const woods = groupWoods(store.db, groupId)
+    .slice(-200)
+    .map((wood) => ({
+      id: wood.id,
+      senderId: wood.sender_id,
+      sender: users.get(wood.sender_id),
+      sentAt: wood.sent_at,
+      label: wood.label || "Wood",
+      type: wood.type || "normal",
+    }));
+  sendJson(res, 200, {
+    group: group ? publicGroup(group, user.id) : null,
+    woods,
+  });
+}
+
 async function notifyStreakMilestone(sender, recipient, count) {
   const senderResult = await notifyUser(store.db, sender.id, {
     title: "Wood streak",
@@ -841,6 +1068,16 @@ async function handleAdmin(user, req, res, url, body) {
     return;
   }
 
+  const dissolveGroup = url.pathname.match(/^\/api\/admin\/groups\/([^/]+)\/dissolve$/);
+  if (req.method === "POST" && dissolveGroup) {
+    await store.write((db) => {
+      const group = db.groups.find((candidate) => candidate.id === dissolveGroup[1]);
+      if (group && !group.dissolved_at) group.dissolved_at = nowIso();
+    });
+    sendJson(res, 200, adminState());
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/admin/notification-styles") {
     sendJson(res, 200, { styles: notificationStyles() });
     return;
@@ -885,6 +1122,7 @@ function adminState() {
       current_longest_streak: userStats(db, user.id).current_longest_streak,
       achievements_earned: achievementProgress(db, user.id).filter((achievement) => achievement.earned).length,
     })),
+    groups: db.groups.map((group) => publicGroup(group)),
     invites: db.invites.map(publicInvite),
     config: db.config,
     notification_styles: notificationStyles(),
@@ -919,6 +1157,28 @@ function publicInvite(invite) {
   };
 }
 
+function publicGroup(group, viewerId = null) {
+  if (!group) return null;
+  const members = groupMembers(store.db, group.id, null);
+  const acceptedMembers = members.filter((member) => member.status === "accepted");
+  const pendingMembers = members.filter((member) => member.status === "pending");
+  return {
+    id: group.id,
+    name: group.name,
+    created_by: group.created_by,
+    created_at: group.created_at,
+    dissolved_at: group.dissolved_at || null,
+    members: acceptedMembers.map((member) =>
+      publicUser(store.db.users.find((user) => user.id === member.user_id)),
+    ).filter(Boolean),
+    pendingMembers: pendingMembers.map((member) =>
+      publicUser(store.db.users.find((user) => user.id === member.user_id)),
+    ).filter(Boolean),
+    wood: viewerId ? visibleGroupWoodState(store.db, viewerId, group.id) : null,
+    stats: groupStats(store.db, group.id),
+  };
+}
+
 function publicUser(user) {
   if (!user) return null;
   return {
@@ -931,6 +1191,12 @@ function publicUser(user) {
 
 function cleanUsername(value) {
   return String(value || "").trim().toLowerCase();
+}
+
+function cleanGroupName(value) {
+  const name = String(value || "").trim().replace(/\s+/g, " ");
+  if (name.length < 2 || name.length > 40) return "";
+  return name;
 }
 
 function clamp(value, min, max) {

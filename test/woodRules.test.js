@@ -6,6 +6,11 @@ import {
   evaluateAchievements,
 } from "../src/achievements.js";
 import {
+  canCreateGroupWith,
+  canSendGroupWood,
+  visibleGroupWoodState,
+} from "../src/groupRules.js";
+import {
   canSendWood,
   notificationStyles,
   pairStats,
@@ -37,6 +42,9 @@ function dbWithWoods(woods = []) {
     streaks: [],
     achievements_def: [],
     achievements_earned: [],
+    groups: [],
+    group_members: [],
+    group_woods: [],
     users: [
       { id: "a", username: "alice", created_at: "2026-05-01T00:00:00.000Z" },
       { id: "b", username: "bob", created_at: "2026-05-01T00:00:00.000Z" },
@@ -46,6 +54,66 @@ function dbWithWoods(woods = []) {
 
 test("a user can wood an accepted friend with no prior outgoing wood", () => {
   assert.equal(canSendWood(dbWithWoods(), "a", "b").ok, true);
+});
+
+test("groups can only invite existing accepted friends", () => {
+  const db = dbWithWoods();
+
+  assert.equal(canCreateGroupWith(db, "a", ["b"]).ok, true);
+  assert.equal(canCreateGroupWith(db, "a", []).reason, "group_needs_members");
+  assert.equal(canCreateGroupWith(db, "a", ["c"]).reason, "friends_only");
+});
+
+test("group wood cooldown clears when another member woods back", () => {
+  const db = dbWithWoods();
+  db.groups.push({
+    id: "group_1",
+    name: "Friday Woods",
+    created_by: "a",
+    created_at: "2026-05-22T00:00:00.000Z",
+    dissolved_at: null,
+  });
+  db.group_members.push(
+    {
+      id: "member_1",
+      group_id: "group_1",
+      user_id: "a",
+      status: "accepted",
+    },
+    {
+      id: "member_2",
+      group_id: "group_1",
+      user_id: "b",
+      status: "accepted",
+    },
+  );
+  db.group_woods.push({
+    id: "group_wood_1",
+    group_id: "group_1",
+    sender_id: "a",
+    sent_at: "2026-05-22T00:00:00.000Z",
+    type: "normal",
+    label: "Wood",
+  });
+
+  const blocked = canSendGroupWood(db, "a", "group_1", Date.parse("2026-05-22T01:00:00.000Z"));
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.reason, "cooldown");
+  assert.equal(visibleGroupWoodState(db, "b", "group_1").needsReply, true);
+
+  db.group_woods.push({
+    id: "group_wood_2",
+    group_id: "group_1",
+    sender_id: "b",
+    sent_at: "2026-05-22T01:01:00.000Z",
+    type: "normal",
+    label: "Wood",
+  });
+
+  assert.equal(
+    canSendGroupWood(db, "a", "group_1", Date.parse("2026-05-22T01:02:00.000Z")).ok,
+    true,
+  );
 });
 
 test("achievement definitions can be earned from wood volume", () => {

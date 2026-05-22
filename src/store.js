@@ -137,6 +137,41 @@ function migrate(sqlite) {
       FOREIGN KEY (muted_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS groups (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      created_by TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      dissolved_at TEXT,
+      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS group_members (
+      id TEXT PRIMARY KEY,
+      group_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      invited_by TEXT,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT,
+      UNIQUE (group_id, user_id),
+      FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (invited_by) REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS group_woods (
+      id TEXT PRIMARY KEY,
+      group_id TEXT NOT NULL,
+      sender_id TEXT NOT NULL,
+      sent_at TEXT NOT NULL,
+      type TEXT NOT NULL,
+      label TEXT NOT NULL,
+      hold_duration_ms INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
+      FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS streaks (
       id TEXT PRIMARY KEY,
       user_a_id TEXT NOT NULL,
@@ -182,6 +217,8 @@ function migrate(sqlite) {
       ON woods(sender_id, recipient_id, sent_at);
     CREATE INDEX IF NOT EXISTS idx_friendships_users
       ON friendships(requester_id, addressee_id, status);
+    CREATE INDEX IF NOT EXISTS idx_group_woods_sent_at
+      ON group_woods(group_id, sender_id, sent_at);
   `);
 
   ensureColumn(sqlite, "users", "deleted_at", "TEXT");
@@ -243,6 +280,9 @@ function loadSnapshot(sqlite) {
     friendships: sqlite.prepare("SELECT * FROM friendships ORDER BY created_at, id").all(),
     woods: sqlite.prepare("SELECT * FROM woods ORDER BY sent_at, id").all(),
     mutes: sqlite.prepare("SELECT * FROM mutes ORDER BY id").all(),
+    groups: sqlite.prepare("SELECT * FROM groups ORDER BY created_at, id").all(),
+    group_members: sqlite.prepare("SELECT * FROM group_members ORDER BY created_at, id").all(),
+    group_woods: sqlite.prepare("SELECT * FROM group_woods ORDER BY sent_at, id").all(),
     streaks: sqlite.prepare("SELECT * FROM streaks ORDER BY updated_at, id").all(),
     achievements_def: sqlite.prepare("SELECT * FROM achievements_def ORDER BY rowid").all(),
     achievements_earned: sqlite.prepare("SELECT * FROM achievements_earned ORDER BY earned_at, id").all(),
@@ -270,6 +310,17 @@ function normalizeDb(db) {
       streak_incremented: Boolean(wood.streak_incremented),
     })),
     mutes: db.mutes || [],
+    groups: (db.groups || []).map((group) => ({
+      ...group,
+      dissolved_at: group.dissolved_at || null,
+    })),
+    group_members: db.group_members || [],
+    group_woods: (db.group_woods || []).map((wood) => ({
+      ...wood,
+      type: wood.type || "normal",
+      label: wood.label || "Wood",
+      hold_duration_ms: Number(wood.hold_duration_ms || 0),
+    })),
     streaks: (db.streaks || []).map((streak) => ({
       ...streak,
       current_streak: Number(streak.current_streak || 0),
@@ -293,6 +344,9 @@ function persistSnapshot(sqlite, db) {
       DELETE FROM achievements_def;
       DELETE FROM mutes;
       DELETE FROM streaks;
+      DELETE FROM group_woods;
+      DELETE FROM group_members;
+      DELETE FROM groups;
       DELETE FROM woods;
       DELETE FROM friendships;
       DELETE FROM push_subs;
@@ -371,6 +425,45 @@ function persistSnapshot(sqlite, db) {
       VALUES (@id, @muter_id, @muted_id)
     `);
     for (const mute of snapshot.mutes) insertMute.run(mute);
+
+    const insertGroup = sqlite.prepare(`
+      INSERT INTO groups
+        (id, name, created_by, created_at, dissolved_at)
+      VALUES
+        (@id, @name, @created_by, @created_at, @dissolved_at)
+    `);
+    for (const group of snapshot.groups) {
+      insertGroup.run({
+        ...group,
+        dissolved_at: group.dissolved_at || null,
+      });
+    }
+
+    const insertGroupMember = sqlite.prepare(`
+      INSERT OR IGNORE INTO group_members
+        (id, group_id, user_id, invited_by, status, created_at, updated_at)
+      VALUES
+        (@id, @group_id, @user_id, @invited_by, @status, @created_at, @updated_at)
+    `);
+    for (const member of snapshot.group_members) {
+      insertGroupMember.run({
+        updated_at: member.created_at,
+        ...member,
+      });
+    }
+
+    const insertGroupWood = sqlite.prepare(`
+      INSERT INTO group_woods
+        (id, group_id, sender_id, sent_at, type, label, hold_duration_ms)
+      VALUES
+        (@id, @group_id, @sender_id, @sent_at, @type, @label, @hold_duration_ms)
+    `);
+    for (const wood of snapshot.group_woods) {
+      insertGroupWood.run({
+        ...wood,
+        hold_duration_ms: Number(wood.hold_duration_ms || 0),
+      });
+    }
 
     const insertStreak = sqlite.prepare(`
       INSERT INTO streaks
