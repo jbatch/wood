@@ -9,6 +9,8 @@ This repo is a small v1 implementation built to match the PRD:
 - admin panel for users, invites, and global config
 - exact-username friend requests, accept/reject/remove/block/mute
 - directional Wood cooldowns that clear when the recipient Woods back
+- pair streaks plus personal and friend-pair stats
+- SQLite persistence with legacy JSON import
 - PWA manifest, service worker, push subscription storage
 - optional Web Push delivery via `web-push` and VAPID keys
 
@@ -20,7 +22,7 @@ npm start
 
 Open [http://localhost:3000](http://localhost:3000).
 
-Data is stored in `data/wood.json` by default. The server creates a first admin automatically when no users exist:
+Data is stored in SQLite at `data/wood.sqlite` by default. If that database is empty and an older `data/wood.json` file exists, the server imports it once on startup. The server creates a first admin automatically when no users exist:
 
 - username: `admin`
 - password: `wood-admin`
@@ -33,7 +35,8 @@ Change that password immediately in any real deployment.
 |---|---:|---|
 | `PORT` | `3000` | HTTP port |
 | `HOST` | `0.0.0.0` | Bind address |
-| `WOOD_DATA_FILE` | `data/wood.json` | File-backed local data store |
+| `WOOD_DB_FILE` | `data/wood.sqlite` | SQLite database path |
+| `WOOD_DATA_FILE` | `data/wood.json` | Legacy JSON import path |
 | `WOOD_TLS_KEY_FILE` | empty | HTTPS private key path for local HTTPS |
 | `WOOD_TLS_CERT_FILE` | empty | HTTPS certificate path for local HTTPS |
 | `WOOD_SESSION_SECRET` | dev secret | Set this in production |
@@ -44,7 +47,27 @@ Change that password immediately in any real deployment.
 
 ## Notes
 
-The v1 server intentionally uses Node built-ins for the core app so the project is easy to run locally. Passwords are hashed with Node's `crypto.scrypt`, which is suitable for password storage without adding native dependencies. For production, swapping the file store for SQLite or Postgres is the main next step.
+The app uses SQLite through `better-sqlite3`, which is a good fit for a small private deployment in a single Docker container. Passwords are hashed with Node's `crypto.scrypt`, which is suitable for password storage without adding native auth infrastructure.
+
+## Docker
+
+Build and run locally:
+
+```sh
+docker build -t wood .
+docker run --rm -p 3000:3000 -v wood-data:/app/data \
+  -e WOOD_BASE_URL=http://localhost:3000 \
+  -e WOOD_SESSION_SECRET=change-me \
+  wood
+```
+
+Or use Compose:
+
+```sh
+docker compose up -d --build
+```
+
+For deployment behind a reverse proxy, set `WOOD_BASE_URL` to the public HTTPS origin, set a long random `WOOD_SESSION_SECRET`, and keep `/app/data` on a persistent volume. `.env.example` has the Compose environment shape.
 
 ## Local HTTPS
 

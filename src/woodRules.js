@@ -1,5 +1,73 @@
 const LONG_WOOD_MAX_MS = 10000;
 const LONG_WOOD_MIN_MS = 2000;
+const STREAK_WINDOW_MS = 24 * 60 * 60 * 1000;
+const STREAK_INCREMENT_MIN_MS = 20 * 60 * 60 * 1000;
+const STREAK_BREAK_MS = 48 * 60 * 60 * 1000;
+const STREAK_MILESTONES = [7, 30, 100, 365];
+const WOOD_NOTIFICATION_TITLES = [
+  "Wood",
+  "{wood}",
+  "Incoming Wood",
+  "You got Wood",
+  "Knock knock",
+  "Wood delivery",
+  "A Wood appears",
+];
+const WOOD_NOTIFICATION_BODIES = [
+  "{sender} wooded you",
+  "{sender} sent you {wood}",
+  "You got Wood",
+  "You've got Wood",
+  "Wood.",
+  "{sender}: Wood?",
+  "Important Wood delivery from {sender}",
+  "{sender} has entered the Wood",
+  "Breaking: {sender} sent Wood",
+  "One fresh {wood} from {sender}",
+  "{sender} pressed the Wood button",
+  "Look alive. {sender} sent Wood",
+  "This is not a drill. It is Wood.",
+  "{sender} says: Wood",
+  "Wood acquired.",
+  "Your Wood has arrived.",
+  "{sender} would like to talk about Wood",
+  "Someone sent Wood. It was {sender}.",
+  "Today's forecast: Wood from {sender}",
+  "Ping. Wood.",
+  "{sender} did a Wood",
+  "{sender}, what did you do? Wood.",
+  "New Wood just dropped.",
+  "A single Wood, courtesy of {sender}.",
+  "The Wood has been summoned.",
+  "{sender} is thinking about Wood.",
+  "You have been Wooded.",
+];
+const WOOD_NOTIFICATION_STYLES = [
+  {
+    id: "classic",
+    icon: "/notifications/wood-classic.png",
+  },
+  {
+    id: "mail",
+    icon: "/notifications/wood-mail.png",
+  },
+  {
+    id: "alert",
+    icon: "/notifications/wood-alert.png",
+    vibrate: [80, 35, 120],
+  },
+  {
+    id: "long",
+    icon: "/notifications/wood-long.png",
+  },
+  {
+    id: "summon",
+    icon: "/notifications/wood-summon.png",
+    vibrate: [40, 30, 40, 30, 120],
+  },
+];
+
+import { id } from "./ids.js";
 
 export function getAcceptedFriendIds(db, userId) {
   return db.friendships
@@ -95,4 +163,286 @@ export function seasonalTheme(db, date = new Date()) {
   if (!db.config.seasonal_enabled) return null;
   const mmdd = date.toISOString().slice(5, 10);
   return db.config.seasonal_themes.find((theme) => theme.date === mmdd) || null;
+}
+
+export function woodNotification({
+  sender,
+  wood = "Wood",
+  seasonal = null,
+  styleId = null,
+} = {}) {
+  const style = notificationStyle(styleId || "classic");
+  if (seasonal?.notification) {
+    return {
+      title: wood,
+      body: applyWoodTemplate(seasonal.notification, { sender, wood }),
+      ...style,
+    };
+  }
+
+  return {
+    title: applyWoodTemplate(randomItem(WOOD_NOTIFICATION_TITLES), { sender, wood }),
+    body: applyWoodTemplate(randomItem(WOOD_NOTIFICATION_BODIES), { sender, wood }),
+    ...style,
+  };
+}
+
+export function notificationStyles() {
+  return WOOD_NOTIFICATION_STYLES.map((style) => ({ ...style }));
+}
+
+export function updatePairStreakAfterWood(db, senderId, recipientId, sentAt = new Date()) {
+  db.streaks ||= [];
+  const nowMs = toMs(sentAt);
+  const streak = ensurePairStreak(db, senderId, recipientId, sentAt);
+  refreshStreak(streak, nowMs);
+
+  const opposite = latestWoodBetween(
+    db,
+    recipientId,
+    senderId,
+    (wood) => toMs(wood.sent_at) <= nowMs,
+  );
+  const lastExchangeMs = streak.last_exchange_at ? toMs(streak.last_exchange_at) : null;
+  const hasNewOpposite =
+    opposite &&
+    (!lastExchangeMs || toMs(opposite.sent_at) > lastExchangeMs) &&
+    nowMs - toMs(opposite.sent_at) <= STREAK_WINDOW_MS;
+
+  if (!hasNewOpposite) {
+    streak.at_risk = isAtRisk(streak, nowMs);
+    streak.updated_at = new Date(nowMs).toISOString();
+    return { streak, incremented: false, milestone: null };
+  }
+
+  const previousCount = streak.current_streak;
+  if (!lastExchangeMs || nowMs - lastExchangeMs > STREAK_BREAK_MS) {
+    streak.current_streak = 1;
+  } else if (nowMs - lastExchangeMs >= STREAK_INCREMENT_MIN_MS) {
+    streak.current_streak += 1;
+  }
+
+  streak.longest_streak = Math.max(streak.longest_streak, streak.current_streak);
+  streak.last_exchange_at = new Date(nowMs).toISOString();
+  streak.at_risk = false;
+  streak.updated_at = new Date(nowMs).toISOString();
+
+  const incremented = streak.current_streak > previousCount;
+  const milestone = incremented ? nextMilestone(streak) : null;
+  return { streak, incremented, milestone };
+}
+
+export function rebuildStreaksFromWoods(db) {
+  const longestByPair = new Map((db.streaks || []).map((streak) => [
+    pairKey(streak.user_a_id, streak.user_b_id),
+    Number(streak.longest_streak || 0),
+  ]));
+  db.streaks = [];
+  const woods = [...(db.woods || [])].sort((a, b) => toMs(a.sent_at) - toMs(b.sent_at));
+  for (const wood of woods) {
+    const result = updatePairStreakAfterWood(
+      db,
+      wood.sender_id,
+      wood.recipient_id,
+      wood.sent_at,
+    );
+    if (result.incremented) {
+      wood.streak_incremented = true;
+      wood.streak_count_after = result.streak.current_streak;
+    }
+  }
+  for (const streak of db.streaks) {
+    const longest = longestByPair.get(pairKey(streak.user_a_id, streak.user_b_id)) || 0;
+    streak.longest_streak = Math.max(streak.longest_streak, longest);
+  }
+}
+
+export function pairStats(db, viewerId, friendId, now = Date.now()) {
+  const woods = woodsBetween(db, viewerId, friendId);
+  const streak = visibleStreak(db, viewerId, friendId, now);
+  return {
+    sent: woods.filter((wood) => wood.sender_id === viewerId).length,
+    received: woods.filter((wood) => wood.recipient_id === viewerId).length,
+    current_streak: streak.current_streak,
+    longest_streak: streak.longest_streak,
+    at_risk: streak.at_risk,
+    first_wood_at: woods[0]?.sent_at || null,
+    last_wood_at: woods.at(-1)?.sent_at || null,
+  };
+}
+
+export function userStats(db, userId, now = Date.now()) {
+  const friendIds = getAcceptedFriendIds(db, userId);
+  const sent = db.woods.filter((wood) => wood.sender_id === userId);
+  const received = db.woods.filter((wood) => wood.recipient_id === userId);
+  const visibleStreaks = friendIds.map((friendId) => visibleStreak(db, userId, friendId, now));
+  const favourite = favouriteWooder(db, userId, friendIds);
+  const user = db.users.find((candidate) => candidate.id === userId);
+
+  return {
+    woods_sent: sent.length,
+    woods_received: received.length,
+    longest_streak: Math.max(0, ...visibleStreaks.map((streak) => streak.longest_streak)),
+    current_longest_streak: Math.max(
+      0,
+      ...visibleStreaks.map((streak) => streak.current_streak),
+    ),
+    favourite_wooder: favourite,
+    long_woods_sent: sent.filter((wood) => wood.type === "long").length,
+    seasonal_woods_sent: sent.filter((wood) => wood.type === "seasonal").length,
+    friends: friendIds.length,
+    member_since: user?.created_at || null,
+  };
+}
+
+export function visibleStreak(db, a, b, now = Date.now()) {
+  const existing = findPairStreak(db, a, b);
+  if (!existing) {
+    return {
+      current_streak: 0,
+      longest_streak: 0,
+      last_exchange_at: null,
+      at_risk: false,
+    };
+  }
+  const copy = { ...existing };
+  refreshStreak(copy, now);
+  return {
+    current_streak: copy.current_streak,
+    longest_streak: copy.longest_streak,
+    last_exchange_at: copy.last_exchange_at,
+    at_risk: copy.at_risk,
+  };
+}
+
+export function streakMilestoneValue(count) {
+  if (STREAK_MILESTONES.includes(count)) return count;
+  if (count > 365 && count % 365 === 0) return count;
+  return null;
+}
+
+function ensurePairStreak(db, a, b, sentAt) {
+  const [userA, userB] = orderedPair(a, b);
+  const existing = findPairStreak(db, a, b);
+  if (existing) return existing;
+
+  const streak = {
+    id: id("streak"),
+    user_a_id: userA,
+    user_b_id: userB,
+    current_streak: 0,
+    longest_streak: 0,
+    last_exchange_at: null,
+    at_risk: false,
+    milestones_sent: [],
+    updated_at: new Date(toMs(sentAt)).toISOString(),
+  };
+  db.streaks.push(streak);
+  return streak;
+}
+
+function findPairStreak(db, a, b) {
+  const key = pairKey(a, b);
+  return (db.streaks || []).find(
+    (streak) => pairKey(streak.user_a_id, streak.user_b_id) === key,
+  );
+}
+
+function refreshStreak(streak, now) {
+  if (!streak.last_exchange_at) {
+    streak.current_streak = 0;
+    streak.at_risk = false;
+    return;
+  }
+  const ageMs = toMs(now) - toMs(streak.last_exchange_at);
+  if (ageMs > STREAK_BREAK_MS) {
+    streak.current_streak = 0;
+    streak.at_risk = false;
+    return;
+  }
+  streak.at_risk = isAtRisk(streak, now);
+}
+
+function isAtRisk(streak, now) {
+  if (!streak.current_streak || !streak.last_exchange_at) return false;
+  const ageMs = toMs(now) - toMs(streak.last_exchange_at);
+  return ageMs >= STREAK_INCREMENT_MIN_MS && ageMs <= STREAK_BREAK_MS;
+}
+
+function nextMilestone(streak) {
+  const value = streakMilestoneValue(streak.current_streak);
+  if (!value) return null;
+  streak.milestones_sent ||= [];
+  if (streak.milestones_sent.includes(value)) return null;
+  streak.milestones_sent.push(value);
+  return value;
+}
+
+function favouriteWooder(db, userId, friendIds) {
+  let best = null;
+  for (const friendId of friendIds) {
+    const count = woodsBetween(db, userId, friendId).length;
+    if (!count) continue;
+    const user = db.users.find((candidate) => candidate.id === friendId);
+    if (!user) continue;
+    if (!best || count > best.woods_exchanged) {
+      best = { id: user.id, username: user.username, woods_exchanged: count };
+    }
+  }
+  return best;
+}
+
+function latestWoodBetween(db, senderId, recipientId, predicate = () => true) {
+  return db.woods
+    .filter(
+      (wood) =>
+        wood.sender_id === senderId &&
+        wood.recipient_id === recipientId &&
+        predicate(wood),
+    )
+    .sort((a, b) => toMs(b.sent_at) - toMs(a.sent_at))[0];
+}
+
+function woodsBetween(db, a, b) {
+  return (db.woods || [])
+    .filter(
+      (wood) =>
+        (wood.sender_id === a && wood.recipient_id === b) ||
+        (wood.sender_id === b && wood.recipient_id === a),
+    )
+    .sort((left, right) => toMs(left.sent_at) - toMs(right.sent_at));
+}
+
+function pairKey(a, b) {
+  return orderedPair(a, b).join(":");
+}
+
+function orderedPair(a, b) {
+  return [a, b].sort();
+}
+
+function toMs(value) {
+  if (typeof value === "number") return value;
+  return Date.parse(value);
+}
+
+function randomItem(items) {
+  return items[Math.floor(Math.random() * items.length)];
+}
+
+function notificationStyle(styleId) {
+  const style =
+    WOOD_NOTIFICATION_STYLES.find((candidate) => candidate.id === styleId) ||
+    WOOD_NOTIFICATION_STYLES[0];
+  return {
+    ...style,
+    badge: "/notifications/wood-badge.png",
+    actions: [{ action: "open", title: "Open Wood" }],
+  };
+}
+
+function applyWoodTemplate(template, values) {
+  return String(template)
+    .replaceAll("{sender}", values.sender || "Someone")
+    .replaceAll("{wood}", values.wood || "Wood");
 }

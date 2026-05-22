@@ -170,6 +170,45 @@ button:disabled {
   gap: 14px;
 }
 
+.stats-strip,
+.pair-stats {
+  display: grid;
+  gap: 8px;
+}
+
+.stats-strip {
+  grid-template-columns: repeat(5, minmax(0, 1fr)) minmax(160px, 1.4fr);
+  margin: 0 0 16px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.stats-strip > div,
+.pair-stats > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.stats-strip strong,
+.pair-stats strong {
+  min-width: 0;
+  font-size: 18px;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.stats-strip span,
+.pair-stats span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
 .friend-row,
 .request-row {
   display: grid;
@@ -179,6 +218,43 @@ button:disabled {
   padding: 12px;
 }
 
+.notification-tests {
+  display: grid;
+  gap: 10px;
+}
+
+.notification-test {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.notification-test img {
+  display: block;
+  border-radius: 8px;
+}
+
+.friend-row {
+  cursor: pointer;
+}
+
+.friend-main {
+  min-width: 0;
+}
+
+.name-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
 .name {
   min-width: 0;
   font-size: 20px;
@@ -186,11 +262,37 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
+.streak {
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: #e8f2de;
+  color: var(--green-dark);
+  font-size: 12px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.streak.risk {
+  background: #fff0cc;
+  color: #755315;
+}
+
 .meta {
   margin-top: 2px;
   color: var(--muted);
   font-size: 13px;
   font-weight: 650;
+}
+
+.pair-stats {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.pair-stats strong {
+  font-size: 15px;
 }
 
 .wood-button {
@@ -305,8 +407,14 @@ td:last-child {
 
   .friend-row,
   .request-row,
-  .inline-form {
+  .notification-test,
+  .inline-form,
+  .stats-strip {
     grid-template-columns: 1fr;
+  }
+
+  .pair-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .wood-button {

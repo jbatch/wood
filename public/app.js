@@ -6,6 +6,9 @@ const state = {
   debug: null,
   error: "",
   pushStatus: null,
+  expandedFriends: new Set(),
+  pollTimer: null,
+  polling: false,
 };
 
 init();
@@ -18,6 +21,7 @@ async function init() {
   state.session = await api("/api/session");
   if (state.session.user) {
     await loadApp();
+    startPolling();
   }
   render();
 }
@@ -87,6 +91,7 @@ function renderAuth() {
       state.session = { user: response.user, push: state.session?.push || {} };
       history.replaceState(null, "", "/");
       await loadApp();
+      startPolling();
       render();
     } catch (err) {
       state.error = humanError(err.message);
@@ -100,8 +105,22 @@ function renderHome() {
   app.innerHTML = `
     <section class="shell">
       ${topbar()}
-      <form class="inline-form" id="friend-form">
-        <input name="username" placeholder="exact username" aria-label="Exact username" required />
+      ${statsStrip(data.stats)}
+      <form class="inline-form" id="friend-form" autocomplete="off">
+        <input
+          name="friendUsername"
+          type="search"
+          placeholder="exact username"
+          aria-label="Exact username"
+          autocomplete="off"
+          autocapitalize="none"
+          autocorrect="off"
+          spellcheck="false"
+          data-1p-ignore
+          data-lpignore="true"
+          data-form-type="other"
+          required
+        />
         <button class="primary" type="submit">Add</button>
       </form>
       <div class="error">${escapeHtml(state.error)}</div>
@@ -137,6 +156,23 @@ function topbar() {
         <button class="ghost" data-action="logout">Log out</button>
       </div>
     </header>
+  `;
+}
+
+function statsStrip(stats) {
+  if (!stats) return "";
+  const favourite = stats.favourite_wooder
+    ? `Favourite ${escapeHtml(stats.favourite_wooder.username)}`
+    : "No favourite yet";
+  return `
+    <div class="stats-strip">
+      <div><strong>${stats.woods_sent}</strong><span>sent</span></div>
+      <div><strong>${stats.woods_received}</strong><span>received</span></div>
+      <div><strong>${stats.current_longest_streak}</strong><span>current streak</span></div>
+      <div><strong>${stats.longest_streak}</strong><span>best streak</span></div>
+      <div><strong>${stats.friends}</strong><span>friends</span></div>
+      <div class="wide"><strong>${favourite}</strong><span>since ${stats.member_since ? formatDate(stats.member_since) : "today"}</span></div>
+    </div>
   `;
 }
 
@@ -183,6 +219,7 @@ function requests(data) {
 }
 
 function friendRow(friend) {
+  const expanded = state.expandedFriends.has(friend.id);
   const cooldown = friend.wood.cooldownExpiresAt
     ? `cooldown ${countdown(friend.wood.cooldownExpiresAt)}`
     : friend.muted
@@ -190,16 +227,23 @@ function friendRow(friend) {
       : friend.wood.needsReply
         ? "reply ready"
         : "";
+  const streakBadge = friend.streak?.current_streak
+    ? `<span class="streak ${friend.streak.at_risk ? "risk" : ""}">${friend.streak.at_risk ? "risk" : "streak"} ${friend.streak.current_streak}</span>`
+    : "";
   return `
-    <div class="friend-row" id="friend-${friend.id}">
-      <div>
-        <div class="name">${escapeHtml(friend.username)}</div>
+    <div class="friend-row ${expanded ? "expanded" : ""}" id="friend-${friend.id}" data-friend-card="${friend.id}">
+      <div class="friend-main">
+        <div class="name-line">
+          <div class="name">${escapeHtml(friend.username)}</div>
+          ${streakBadge}
+        </div>
         <div class="meta">${escapeHtml(cooldown)}</div>
         <div class="row-actions" style="justify-content:flex-start;margin-top:8px">
           <button class="ghost small" data-friend="${friend.id}" data-action="${friend.muted ? "unmute" : "mute"}">${friend.muted ? "Unmute" : "Mute"}</button>
           <button class="ghost small" data-friend="${friend.id}" data-action="remove">Remove</button>
           <button class="danger small" data-friend="${friend.id}" data-action="block">Block</button>
         </div>
+        ${expanded ? pairStatsPanel(friend.stats) : ""}
       </div>
       <button
         class="wood-button ${friend.wood.needsReply ? "pulse" : ""}"
@@ -207,6 +251,20 @@ function friendRow(friend) {
         data-action="wood"
         ${friend.wood.canWood ? "" : "disabled"}
       >WOOD</button>
+    </div>
+  `;
+}
+
+function pairStatsPanel(stats) {
+  if (!stats) return "";
+  return `
+    <div class="pair-stats">
+      <div><strong>${stats.sent}</strong><span>sent</span></div>
+      <div><strong>${stats.received}</strong><span>received</span></div>
+      <div><strong>${stats.current_streak}</strong><span>current</span></div>
+      <div><strong>${stats.longest_streak}</strong><span>best</span></div>
+      <div><strong>${stats.first_wood_at ? formatDate(stats.first_wood_at) : "None"}</strong><span>first</span></div>
+      <div><strong>${stats.last_wood_at ? formatDate(stats.last_wood_at) : "None"}</strong><span>last</span></div>
     </div>
   `;
 }
@@ -239,12 +297,21 @@ function bindHome() {
   });
   document.querySelector("#friend-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const username = new FormData(event.currentTarget).get("username");
+    const username = new FormData(event.currentTarget).get("friendUsername");
     await mutate("/api/friend-requests", { username });
   });
   document.querySelectorAll("[data-request]").forEach((button) => {
     button.addEventListener("click", async () => {
       await mutate(`/api/friend-requests/${button.dataset.request}/${button.dataset.reply}`);
+    });
+  });
+  document.querySelectorAll("[data-friend-card]").forEach((row) => {
+    row.addEventListener("click", (event) => {
+      if (event.target.closest("button")) return;
+      const friendId = row.dataset.friendCard;
+      if (state.expandedFriends.has(friendId)) state.expandedFriends.delete(friendId);
+      else state.expandedFriends.add(friendId);
+      render();
     });
   });
   document.querySelectorAll("[data-friend]").forEach((button) => {
@@ -305,7 +372,7 @@ function renderAdmin() {
         </form>
       </div>
       <h2 class="section-title">Stats</h2>
-      <div class="panel">${admin.stats.total_users} users · ${admin.stats.total_woods} Woods · ${admin.stats.woods_today} today</div>
+      <div class="panel">${admin.stats.total_users} users · ${admin.stats.total_woods} Woods · ${admin.stats.woods_today} today · ${admin.stats.active_streaks} active streaks</div>
       <h2 class="section-title">Invites</h2>
       <div class="admin-table">${inviteTable(admin.invites)}</div>
       <h2 class="section-title">Users</h2>
@@ -315,6 +382,8 @@ function renderAdmin() {
         <button class="ghost small" data-action="refresh-debug">Refresh</button>
         <button class="danger small" data-action="clear-push">Clear server push subscriptions</button>
       </div>
+      <h2 class="section-title">Notification tests</h2>
+      <div class="notification-tests">${notificationStyleTests(admin)}</div>
       <div class="admin-table">${debugTable(state.debug?.entries || [])}</div>
     </section>
   `;
@@ -346,7 +415,7 @@ function inviteTable(invites) {
 function userTable(users) {
   return `
     <table>
-      <thead><tr><th>User</th><th>Role</th><th>Status</th><th>Woods</th><th></th></tr></thead>
+      <thead><tr><th>User</th><th>Role</th><th>Status</th><th>Woods</th><th>Streak</th><th></th></tr></thead>
       <tbody>
         ${users
           .map(
@@ -355,7 +424,8 @@ function userTable(users) {
             <td>${escapeHtml(user.username)}<div class="meta">${escapeHtml(user.email)}</div></td>
             <td>${user.role}</td>
             <td>${user.suspended ? "suspended" : "active"}</td>
-            <td>${user.woods_sent}</td>
+            <td>${user.woods_sent} sent<div class="meta">${user.woods_received} received</div></td>
+            <td>${user.current_longest_streak}</td>
             <td>
               <button class="primary small" data-user="${user.id}" data-admin-action="test-push">Test push</button>
               <button class="ghost small" data-user="${user.id}" data-admin-action="${user.suspended ? "unsuspend" : "suspend"}">${user.suspended ? "Unsuspend" : "Suspend"}</button>
@@ -366,6 +436,36 @@ function userTable(users) {
           .join("")}
       </tbody>
     </table>`;
+}
+
+function notificationStyleTests(admin) {
+  const users = admin.users.filter((user) => !user.suspended);
+  const styles = admin.notification_styles || [];
+  if (!users.length || !styles.length) {
+    return `<div class="empty">No notification styles available.</div>`;
+  }
+  return styles
+    .map(
+      (style) => `
+      <div class="notification-test">
+        <img src="${style.icon}" alt="" width="48" height="48" />
+        <div>
+          <div class="name">${escapeHtml(style.id)}</div>
+          <div class="meta">icon${style.vibrate ? " + vibration" : ""}</div>
+        </div>
+        <div class="row-actions">
+          ${users
+            .map(
+              (user) => `
+              <button class="ghost small" data-user="${user.id}" data-style="${style.id}">
+                ${escapeHtml(user.username)}
+              </button>`,
+            )
+            .join("")}
+        </div>
+      </div>`,
+    )
+    .join("");
 }
 
 function debugTable(entries) {
@@ -449,6 +549,18 @@ function bindAdmin() {
       renderAdmin();
     });
   });
+  document.querySelectorAll("[data-style]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const response = await api(`/api/admin/users/${button.dataset.user}/test-push`, {
+        method: "POST",
+        body: { styleId: button.dataset.style },
+      });
+      state.admin = response.admin;
+      state.error = `Test ${button.dataset.style} sent: ${response.result.sent}/${response.result.attempted}`;
+      state.debug = await api("/api/admin/debug");
+      renderAdmin();
+    });
+  });
 }
 
 async function mutate(url, body = {}) {
@@ -467,8 +579,47 @@ async function logout() {
   await api("/api/logout", { method: "POST" });
   state.session = { user: null };
   state.data = null;
+  stopPolling();
   history.replaceState(null, "", "/");
   render();
+}
+
+function startPolling() {
+  if (state.pollTimer) return;
+  state.pollTimer = setInterval(pollHome, 12000);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") pollHome();
+  });
+}
+
+function stopPolling() {
+  if (!state.pollTimer) return;
+  clearInterval(state.pollTimer);
+  state.pollTimer = null;
+}
+
+async function pollHome() {
+  if (
+    state.polling ||
+    !state.session?.user ||
+    location.pathname === "/admin" ||
+    document.visibilityState === "hidden"
+  ) {
+    return;
+  }
+  state.polling = true;
+  const previousError = state.error;
+  try {
+    state.data = await api("/api/app");
+    state.error = previousError;
+    await refreshPushStatus();
+    render();
+  } catch (err) {
+    state.error = humanError(err.message);
+    render();
+  } finally {
+    state.polling = false;
+  }
 }
 
 async function subscribePush() {

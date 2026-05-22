@@ -1,9 +1,12 @@
-import fs from "node:fs/promises";
+import fs from "node:fs";
+import fsp from "node:fs/promises";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { config } from "./config.js";
 import { hashPassword } from "./auth.js";
 import { id, inviteCode } from "./ids.js";
 import { addDaysIso, nowIso } from "./time.js";
+import { rebuildStreaksFromWoods } from "./woodRules.js";
 
 const initialConfig = {
   cooldown_hours: 24,
@@ -30,69 +33,339 @@ const initialConfig = {
   ],
 };
 
-export async function createStore(file = config.dataFile) {
-  await fs.mkdir(path.dirname(file), { recursive: true });
-  let db;
-  try {
-    db = JSON.parse(await fs.readFile(file, "utf8"));
-  } catch (err) {
-    if (err.code !== "ENOENT") throw err;
-    db = emptyDb();
-  }
+export async function createStore(file = config.dbFile) {
+  await fsp.mkdir(path.dirname(file), { recursive: true });
+  const sqlite = new Database(file);
+  sqlite.pragma("journal_mode = WAL");
+  sqlite.pragma("foreign_keys = ON");
+  migrate(sqlite);
+  importLegacyJsonIfNeeded(sqlite);
 
-  db.config = { ...initialConfig, ...(db.config || {}) };
-  await seedFirstAdmin(db);
-  await persist(file, db);
-
-  return {
-    db,
+  const store = {
+    db: loadSnapshot(sqlite),
     file,
+    sqlite,
     async write(mutator) {
-      const result = await mutator(db);
-      await persist(file, db);
+      const result = await mutator(store.db);
+      persistSnapshot(sqlite, store.db);
+      store.db = loadSnapshot(sqlite);
       return result;
     },
   };
+
+  await seedFirstAdmin(store);
+  if (store.db.woods.length && !store.db.streaks.length) {
+    await store.write((db) => rebuildStreaksFromWoods(db));
+  }
+  store.db = loadSnapshot(sqlite);
+  return store;
 }
 
-function emptyDb() {
+function migrate(sqlite) {
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      username TEXT NOT NULL UNIQUE,
+      email TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'user',
+      suspended INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      last_active_at TEXT,
+      deleted_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS push_subs (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      endpoint TEXT NOT NULL UNIQUE,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS invites (
+      id TEXT PRIMARY KEY,
+      code TEXT NOT NULL UNIQUE,
+      created_by TEXT,
+      expires_at TEXT NOT NULL,
+      used_by TEXT,
+      used_at TEXT,
+      revoked_at TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+      FOREIGN KEY (used_by) REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS friendships (
+      id TEXT PRIMARY KEY,
+      requester_id TEXT NOT NULL,
+      addressee_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      blocked_by TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT,
+      FOREIGN KEY (requester_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (addressee_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (blocked_by) REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS woods (
+      id TEXT PRIMARY KEY,
+      sender_id TEXT NOT NULL,
+      recipient_id TEXT NOT NULL,
+      sent_at TEXT NOT NULL,
+      type TEXT NOT NULL,
+      label TEXT NOT NULL,
+      hold_duration_ms INTEGER NOT NULL DEFAULT 0,
+      streak_count_after INTEGER,
+      streak_incremented INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (recipient_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS mutes (
+      id TEXT PRIMARY KEY,
+      muter_id TEXT NOT NULL,
+      muted_id TEXT NOT NULL,
+      UNIQUE (muter_id, muted_id),
+      FOREIGN KEY (muter_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (muted_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS streaks (
+      id TEXT PRIMARY KEY,
+      user_a_id TEXT NOT NULL,
+      user_b_id TEXT NOT NULL,
+      current_streak INTEGER NOT NULL DEFAULT 0,
+      longest_streak INTEGER NOT NULL DEFAULT 0,
+      last_exchange_at TEXT,
+      at_risk INTEGER NOT NULL DEFAULT 0,
+      milestones_sent TEXT NOT NULL DEFAULT '[]',
+      updated_at TEXT NOT NULL,
+      UNIQUE (user_a_id, user_b_id),
+      FOREIGN KEY (user_a_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_b_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS app_config (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      config_json TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_woods_pair_sent_at
+      ON woods(sender_id, recipient_id, sent_at);
+    CREATE INDEX IF NOT EXISTS idx_friendships_users
+      ON friendships(requester_id, addressee_id, status);
+  `);
+
+  ensureColumn(sqlite, "users", "deleted_at", "TEXT");
+  ensureColumn(sqlite, "woods", "hold_duration_ms", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(sqlite, "woods", "streak_count_after", "INTEGER");
+  ensureColumn(sqlite, "woods", "streak_incremented", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(sqlite, "streaks", "milestones_sent", "TEXT NOT NULL DEFAULT '[]'");
+}
+
+function ensureColumn(sqlite, table, column, definition) {
+  const columns = sqlite.prepare(`PRAGMA table_info(${table})`).all();
+  if (!columns.some((item) => item.name === column)) {
+    sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
+function importLegacyJsonIfNeeded(sqlite) {
+  const userCount = sqlite.prepare("SELECT COUNT(*) AS count FROM users").get().count;
+  if (userCount > 0 || !fs.existsSync(config.dataFile)) return;
+
+  const legacy = JSON.parse(fs.readFileSync(config.dataFile, "utf8"));
+  persistSnapshot(sqlite, normalizeDb(legacy));
+}
+
+async function seedFirstAdmin(store) {
+  if (store.db.users.length) return;
+  await store.write(async (db) => {
+    const admin = {
+      id: id("user"),
+      username: "admin",
+      email: "admin@example.com",
+      password_hash: await hashPassword("wood-admin"),
+      role: "admin",
+      suspended: false,
+      created_at: nowIso(),
+      last_active_at: null,
+      deleted_at: null,
+    };
+    db.users.push(admin);
+    db.invites.push({
+      id: id("invite"),
+      code: inviteCode(),
+      created_by: admin.id,
+      expires_at: addDaysIso(7),
+      used_by: null,
+      used_at: null,
+      revoked_at: null,
+      created_at: nowIso(),
+    });
+  });
+}
+
+function loadSnapshot(sqlite) {
+  const configRow = sqlite.prepare("SELECT config_json FROM app_config WHERE id = 1").get();
+  return normalizeDb({
+    users: sqlite.prepare("SELECT * FROM users ORDER BY created_at, id").all(),
+    push_subs: sqlite.prepare("SELECT * FROM push_subs ORDER BY created_at, id").all(),
+    invites: sqlite.prepare("SELECT * FROM invites ORDER BY created_at, id").all(),
+    friendships: sqlite.prepare("SELECT * FROM friendships ORDER BY created_at, id").all(),
+    woods: sqlite.prepare("SELECT * FROM woods ORDER BY sent_at, id").all(),
+    mutes: sqlite.prepare("SELECT * FROM mutes ORDER BY id").all(),
+    streaks: sqlite.prepare("SELECT * FROM streaks ORDER BY updated_at, id").all(),
+    config: configRow ? JSON.parse(configRow.config_json) : initialConfig,
+  });
+}
+
+function normalizeDb(db) {
   return {
-    users: [],
-    push_subs: [],
-    invites: [],
-    friendships: [],
-    woods: [],
-    mutes: [],
-    config: initialConfig,
+    users: (db.users || []).map((user) => ({
+      ...user,
+      suspended: Boolean(user.suspended),
+      deleted_at: user.deleted_at || null,
+    })),
+    push_subs: db.push_subs || [],
+    invites: db.invites || [],
+    friendships: db.friendships || [],
+    woods: (db.woods || []).map((wood) => ({
+      ...wood,
+      type: wood.type || "normal",
+      label: wood.label || "Wood",
+      hold_duration_ms: Number(wood.hold_duration_ms || 0),
+      streak_count_after:
+        wood.streak_count_after === undefined ? null : wood.streak_count_after,
+      streak_incremented: Boolean(wood.streak_incremented),
+    })),
+    mutes: db.mutes || [],
+    streaks: (db.streaks || []).map((streak) => ({
+      ...streak,
+      current_streak: Number(streak.current_streak || 0),
+      longest_streak: Number(streak.longest_streak || 0),
+      at_risk: Boolean(streak.at_risk),
+      milestones_sent: Array.isArray(streak.milestones_sent)
+        ? streak.milestones_sent
+        : JSON.parse(streak.milestones_sent || "[]"),
+    })),
+    config: { ...initialConfig, ...(db.config || {}) },
   };
 }
 
-async function seedFirstAdmin(db) {
-  if (db.users.length) return;
-  db.users.push({
-    id: id("user"),
-    username: "admin",
-    email: "admin@example.com",
-    password_hash: await hashPassword("wood-admin"),
-    role: "admin",
-    suspended: false,
-    created_at: nowIso(),
-    last_active_at: null,
-  });
-  db.invites.push({
-    id: id("invite"),
-    code: inviteCode(),
-    created_by: db.users[0].id,
-    expires_at: addDaysIso(7),
-    used_by: null,
-    used_at: null,
-    revoked_at: null,
-    created_at: nowIso(),
-  });
-}
+function persistSnapshot(sqlite, db) {
+  const snapshot = normalizeDb(db);
+  const transaction = sqlite.transaction(() => {
+    sqlite.exec(`
+      DELETE FROM mutes;
+      DELETE FROM streaks;
+      DELETE FROM woods;
+      DELETE FROM friendships;
+      DELETE FROM push_subs;
+      DELETE FROM invites;
+      DELETE FROM users;
+      DELETE FROM app_config;
+    `);
 
-async function persist(file, db) {
-  const tempFile = `${file}.tmp`;
-  await fs.writeFile(tempFile, `${JSON.stringify(db, null, 2)}\n`);
-  await fs.rename(tempFile, file);
+    const insertUser = sqlite.prepare(`
+      INSERT INTO users
+        (id, username, email, password_hash, role, suspended, created_at, last_active_at, deleted_at)
+      VALUES
+        (@id, @username, @email, @password_hash, @role, @suspended, @created_at, @last_active_at, @deleted_at)
+    `);
+    for (const user of snapshot.users) {
+      insertUser.run({
+        ...user,
+        suspended: user.suspended ? 1 : 0,
+        deleted_at: user.deleted_at || null,
+      });
+    }
+
+    const insertInvite = sqlite.prepare(`
+      INSERT INTO invites
+        (id, code, created_by, expires_at, used_by, used_at, revoked_at, created_at)
+      VALUES
+        (@id, @code, @created_by, @expires_at, @used_by, @used_at, @revoked_at, @created_at)
+    `);
+    for (const invite of snapshot.invites) insertInvite.run(invite);
+
+    const insertPushSub = sqlite.prepare(`
+      INSERT INTO push_subs
+        (id, user_id, endpoint, p256dh, auth, created_at, updated_at)
+      VALUES
+        (@id, @user_id, @endpoint, @p256dh, @auth, @created_at, @updated_at)
+    `);
+    for (const sub of snapshot.push_subs) insertPushSub.run(sub);
+
+    const insertFriendship = sqlite.prepare(`
+      INSERT INTO friendships
+        (id, requester_id, addressee_id, status, blocked_by, created_at, updated_at)
+      VALUES
+        (@id, @requester_id, @addressee_id, @status, @blocked_by, @created_at, @updated_at)
+    `);
+    for (const friendship of snapshot.friendships) {
+      insertFriendship.run({
+        blocked_by: null,
+        updated_at: friendship.created_at,
+        ...friendship,
+      });
+    }
+
+    const insertWood = sqlite.prepare(`
+      INSERT INTO woods
+        (
+          id, sender_id, recipient_id, sent_at, type, label, hold_duration_ms,
+          streak_count_after, streak_incremented
+        )
+      VALUES
+        (
+          @id, @sender_id, @recipient_id, @sent_at, @type, @label,
+          @hold_duration_ms, @streak_count_after, @streak_incremented
+        )
+    `);
+    for (const wood of snapshot.woods) {
+      insertWood.run({
+        ...wood,
+        hold_duration_ms: Number(wood.hold_duration_ms || 0),
+        streak_count_after: wood.streak_count_after ?? null,
+        streak_incremented: wood.streak_incremented ? 1 : 0,
+      });
+    }
+
+    const insertMute = sqlite.prepare(`
+      INSERT OR IGNORE INTO mutes (id, muter_id, muted_id)
+      VALUES (@id, @muter_id, @muted_id)
+    `);
+    for (const mute of snapshot.mutes) insertMute.run(mute);
+
+    const insertStreak = sqlite.prepare(`
+      INSERT INTO streaks
+        (
+          id, user_a_id, user_b_id, current_streak, longest_streak,
+          last_exchange_at, at_risk, milestones_sent, updated_at
+        )
+      VALUES
+        (
+          @id, @user_a_id, @user_b_id, @current_streak, @longest_streak,
+          @last_exchange_at, @at_risk, @milestones_sent, @updated_at
+        )
+    `);
+    for (const streak of snapshot.streaks) {
+      insertStreak.run({
+        ...streak,
+        at_risk: streak.at_risk ? 1 : 0,
+        milestones_sent: JSON.stringify(streak.milestones_sent || []),
+      });
+    }
+
+    sqlite
+      .prepare("INSERT INTO app_config (id, config_json) VALUES (1, ?)")
+      .run(JSON.stringify(snapshot.config));
+  });
+  transaction();
 }

@@ -12,6 +12,9 @@ export const config = {
   dataFile:
     process.env.WOOD_DATA_FILE ||
     path.join(process.cwd(), "data", "wood.json"),
+  dbFile:
+    process.env.WOOD_DB_FILE ||
+    path.join(process.cwd(), "data", "wood.sqlite"),
   tlsKeyFile: process.env.WOOD_TLS_KEY_FILE || "",
   tlsCertFile: process.env.WOOD_TLS_CERT_FILE || "",
   sessionSecret:

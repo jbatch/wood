@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { canSendWood, visibleWoodState, woodVariant } from "../src/woodRules.js";
+import {
+  canSendWood,
+  notificationStyles,
+  pairStats,
+  updatePairStreakAfterWood,
+  userStats,
+  visibleStreak,
+  visibleWoodState,
+  woodNotification,
+  woodVariant,
+} from "../src/woodRules.js";
 
 function dbWithWoods(woods = []) {
   return {
@@ -14,6 +24,11 @@ function dbWithWoods(woods = []) {
       },
     ],
     woods,
+    streaks: [],
+    users: [
+      { id: "a", username: "alice", created_at: "2026-05-01T00:00:00.000Z" },
+      { id: "b", username: "bob", created_at: "2026-05-01T00:00:00.000Z" },
+    ],
   };
 }
 
@@ -76,4 +91,178 @@ test("long woods stretch the label from hold duration", () => {
   });
   assert.equal(woodVariant({ holdMs: 2800 }).type, "long");
   assert.match(woodVariant({ holdMs: 2800 }).label, /^Wo+d$/);
+});
+
+test("a mutual exchange starts a pair streak", () => {
+  const db = dbWithWoods([
+    {
+      sender_id: "a",
+      recipient_id: "b",
+      sent_at: "2026-05-22T00:00:00.000Z",
+    },
+    {
+      sender_id: "b",
+      recipient_id: "a",
+      sent_at: "2026-05-22T00:05:00.000Z",
+    },
+  ]);
+
+  const result = updatePairStreakAfterWood(db, "b", "a", "2026-05-22T00:05:00.000Z");
+
+  assert.equal(result.incremented, true);
+  assert.equal(result.streak.current_streak, 1);
+  assert.equal(visibleStreak(db, "a", "b").current_streak, 1);
+});
+
+test("one-sided woods do not increment a streak", () => {
+  const db = dbWithWoods([
+    {
+      sender_id: "a",
+      recipient_id: "b",
+      sent_at: "2026-05-22T00:00:00.000Z",
+    },
+  ]);
+
+  const result = updatePairStreakAfterWood(db, "a", "b", "2026-05-22T00:00:00.000Z");
+
+  assert.equal(result.incremented, false);
+  assert.equal(result.streak.current_streak, 0);
+});
+
+test("a stale streak breaks after forty eight hours without mutual exchange", () => {
+  const db = dbWithWoods();
+  db.streaks.push({
+    id: "streak_1",
+    user_a_id: "a",
+    user_b_id: "b",
+    current_streak: 4,
+    longest_streak: 4,
+    last_exchange_at: "2026-05-20T00:00:00.000Z",
+    at_risk: false,
+    milestones_sent: [],
+    updated_at: "2026-05-20T00:00:00.000Z",
+  });
+
+  const streak = visibleStreak(db, "a", "b", Date.parse("2026-05-22T00:00:01.000Z"));
+
+  assert.equal(streak.current_streak, 0);
+  assert.equal(streak.longest_streak, 4);
+  assert.equal(streak.at_risk, false);
+});
+
+test("a streak is at risk after twenty hours without a mutual exchange", () => {
+  const db = dbWithWoods();
+  db.streaks.push({
+    id: "streak_1",
+    user_a_id: "a",
+    user_b_id: "b",
+    current_streak: 2,
+    longest_streak: 2,
+    last_exchange_at: "2026-05-22T00:00:00.000Z",
+    at_risk: false,
+    milestones_sent: [],
+    updated_at: "2026-05-22T00:00:00.000Z",
+  });
+
+  const streak = visibleStreak(db, "a", "b", Date.parse("2026-05-22T20:00:00.000Z"));
+
+  assert.equal(streak.current_streak, 2);
+  assert.equal(streak.at_risk, true);
+});
+
+test("pair stats count sent and received woods", () => {
+  const db = dbWithWoods([
+    {
+      sender_id: "a",
+      recipient_id: "b",
+      sent_at: "2026-05-22T00:00:00.000Z",
+      type: "normal",
+    },
+    {
+      sender_id: "b",
+      recipient_id: "a",
+      sent_at: "2026-05-22T00:05:00.000Z",
+      type: "long",
+    },
+  ]);
+
+  const stats = pairStats(db, "a", "b");
+
+  assert.equal(stats.sent, 1);
+  assert.equal(stats.received, 1);
+  assert.equal(stats.first_wood_at, "2026-05-22T00:00:00.000Z");
+  assert.equal(stats.last_wood_at, "2026-05-22T00:05:00.000Z");
+});
+
+test("user stats summarize personal activity", () => {
+  const db = dbWithWoods([
+    {
+      sender_id: "a",
+      recipient_id: "b",
+      sent_at: "2026-05-22T00:00:00.000Z",
+      type: "long",
+    },
+    {
+      sender_id: "b",
+      recipient_id: "a",
+      sent_at: "2026-05-22T00:05:00.000Z",
+      type: "seasonal",
+    },
+  ]);
+
+  const stats = userStats(db, "a");
+
+  assert.equal(stats.woods_sent, 1);
+  assert.equal(stats.woods_received, 1);
+  assert.equal(stats.long_woods_sent, 1);
+  assert.equal(stats.seasonal_woods_sent, 0);
+  assert.equal(stats.friends, 1);
+  assert.deepEqual(stats.favourite_wooder, {
+    id: "b",
+    username: "bob",
+    woods_exchanged: 2,
+  });
+});
+
+test("wood notifications substitute sender and wood labels", () => {
+  const notification = woodNotification({ sender: "alice", wood: "Wooooood" });
+
+  assert.equal(notification.title.includes("{"), false);
+  assert.equal(notification.body.includes("{"), false);
+  assert.match(notification.icon, /^\/notifications\/.+\.png$/);
+  assert.equal(notification.badge, "/notifications/wood-badge.png");
+  assert.deepEqual(notification.actions, [{ action: "open", title: "Open Wood" }]);
+});
+
+test("seasonal wood notifications override random templates", () => {
+  const notification = woodNotification({
+    sender: "alice",
+    wood: "Christmas Wood",
+    seasonal: {
+      notification: "{sender} sent you a {wood}",
+    },
+  });
+
+  assert.equal(notification.title, "Christmas Wood");
+  assert.equal(notification.body, "alice sent you a Christmas Wood");
+  assert.equal(notification.badge, "/notifications/wood-badge.png");
+});
+
+test("wood notifications can use a requested visual style", () => {
+  const notification = woodNotification({
+    sender: "alice",
+    wood: "Wood",
+    styleId: "mail",
+  });
+
+  assert.equal(notification.id, "mail");
+  assert.equal(notification.icon, "/notifications/wood-mail.png");
+  assert.equal("image" in notification, false);
+});
+
+test("notification styles expose generated PNG variants", () => {
+  assert.deepEqual(
+    notificationStyles().map((style) => style.id),
+    ["classic", "mail", "alert", "long", "summon"],
+  );
 });

@@ -28,8 +28,14 @@ import {
   findFriendship,
   getAcceptedFriendIds,
   isBlockedBetween,
+  notificationStyles,
+  pairStats,
   seasonalTheme,
+  updatePairStreakAfterWood,
+  userStats,
+  visibleStreak,
   visibleWoodState,
+  woodNotification,
   woodVariant,
 } from "./woodRules.js";
 import { notifyUser, pushPublicConfig } from "./push.js";
@@ -279,12 +285,15 @@ function appState(user) {
         ...publicUser(friend),
         muted,
         wood: visibleWoodState(db, user.id, friend.id),
+        streak: visibleStreak(db, user.id, friend.id),
+        stats: pairStats(db, user.id, friend.id),
       };
     })
     .sort((a, b) => a.username.localeCompare(b.username));
 
   return {
     user: publicUser(user),
+    stats: userStats(db, user.id),
     friends,
     incomingRequests: db.friendships
       .filter(
@@ -488,22 +497,32 @@ async function sendWood(user, res, recipientId, body) {
   }
 
   const seasonal = seasonalTheme(store.db);
-  const variant = woodVariant({ holdMs: Number(body.holdMs || 0), seasonal });
+  const holdMs = Number(body.holdMs || 0);
+  const variant = woodVariant({ holdMs, seasonal });
   const muted = store.db.mutes.some(
     (mute) => mute.muter_id === recipientId && mute.muted_id === user.id,
   );
 
-  const wood = await store.write((db) => {
+  const { wood, streakResult } = await store.write((db) => {
+    const sentAt = nowIso();
     const entry = {
       id: id("wood"),
       sender_id: user.id,
       recipient_id: recipientId,
-      sent_at: nowIso(),
+      sent_at: sentAt,
       type: variant.type,
       label: variant.label,
+      hold_duration_ms: holdMs,
+      streak_count_after: null,
+      streak_incremented: false,
     };
     db.woods.push(entry);
-    return entry;
+    const result = updatePairStreakAfterWood(db, user.id, recipientId, sentAt);
+    entry.streak_incremented = result.incremented;
+    entry.streak_count_after = result.incremented
+      ? result.streak.current_streak
+      : null;
+    return { wood: entry, streakResult: result };
   });
 
   debugLog("wood.created", {
@@ -515,15 +534,25 @@ async function sendWood(user, res, recipientId, body) {
     muted,
     type: variant.type,
     label: variant.label,
+    streak: streakResult.streak.current_streak,
+    incremented: streakResult.incremented,
+    milestone: streakResult.milestone,
   });
 
   if (!muted) {
-    const message =
-      seasonal?.notification?.replace("{sender}", user.username) ||
-      `${user.username} wooded you 🪵`;
+    const notification = woodNotification({
+      sender: user.username,
+      wood: variant.label,
+      seasonal,
+    });
     const result = await notifyUser(store.db, recipientId, {
-      title: variant.label,
-      body: variant.type === "long" ? `${user.username} sent you a ${variant.label}` : message,
+      title: notification.title,
+      body: notification.body,
+      icon: notification.icon,
+      badge: notification.badge,
+      vibrate: notification.vibrate,
+      actions: notification.actions,
+      styleId: notification.id,
       url: `/?friend=${encodeURIComponent(user.id)}`,
       friendId: user.id,
       woodId: wood.id,
@@ -553,7 +582,35 @@ async function sendWood(user, res, recipientId, body) {
     });
   }
 
+  if (streakResult.milestone) {
+    await notifyStreakMilestone(user, recipient, streakResult.milestone);
+  }
+
   sendJson(res, 201, appState(user));
+}
+
+async function notifyStreakMilestone(sender, recipient, count) {
+  const senderResult = await notifyUser(store.db, sender.id, {
+    title: "Wood streak",
+    body: `You and ${recipient.username} have a ${count}-day Wood streak!`,
+    url: `/?friend=${encodeURIComponent(recipient.id)}`,
+    friendId: recipient.id,
+    streak: count,
+  });
+  const recipientResult = await notifyUser(store.db, recipient.id, {
+    title: "Wood streak",
+    body: `You and ${sender.username} have a ${count}-day Wood streak!`,
+    url: `/?friend=${encodeURIComponent(sender.id)}`,
+    friendId: sender.id,
+    streak: count,
+  });
+  debugLog("streak.milestone", {
+    senderId: sender.id,
+    recipientId: recipient.id,
+    count,
+    senderSent: senderResult.sent,
+    recipientSent: recipientResult.sent,
+  });
 }
 
 async function handleAdmin(user, req, res, url, body) {
@@ -658,9 +715,20 @@ async function handleAdmin(user, req, res, url, body) {
       sendJson(res, 404, { error: "not_found" });
       return;
     }
+    const requestedStyle = notificationStyles().find((style) => style.id === body.styleId);
+    const notification = woodNotification({
+      sender: user.username,
+      wood: requestedStyle ? `Test ${requestedStyle.id} Wood` : "Test Wood",
+      styleId: requestedStyle?.id,
+    });
     const result = await notifyUser(store.db, target.id, {
       title: "Wood test",
-      body: `Test push for ${target.username}`,
+      body: `${notification.title}: ${notification.body}`,
+      icon: notification.icon,
+      badge: notification.badge,
+      vibrate: notification.vibrate,
+      actions: notification.actions,
+      styleId: notification.id,
       url: "/admin",
       test: true,
     });
@@ -680,6 +748,11 @@ async function handleAdmin(user, req, res, url, body) {
       staleCount: result.stale.length,
     });
     sendJson(res, 200, { result, admin: adminState() });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/admin/notification-styles") {
+    sendJson(res, 200, { styles: notificationStyles() });
     return;
   }
 
@@ -718,13 +791,19 @@ function adminState() {
       last_active_at: user.last_active_at,
       friend_count: getAcceptedFriendIds(db, user.id).length,
       woods_sent: db.woods.filter((wood) => wood.sender_id === user.id).length,
+      woods_received: db.woods.filter((wood) => wood.recipient_id === user.id).length,
+      current_longest_streak: userStats(db, user.id).current_longest_streak,
     })),
     invites: db.invites.map(publicInvite),
     config: db.config,
+    notification_styles: notificationStyles(),
     stats: {
       total_users: db.users.length,
       total_woods: db.woods.length,
       woods_today: db.woods.filter((wood) => wood.sent_at.slice(0, 10) === nowIso().slice(0, 10)).length,
+      active_streaks: db.streaks.filter(
+        (streak) => visibleStreak(db, streak.user_a_id, streak.user_b_id).current_streak > 0,
+      ).length,
     },
   };
 }

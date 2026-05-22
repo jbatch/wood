@@ -7,6 +7,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "WOOD_DEV=1 node src/server.js",
+    "assets:notifications": "node scripts/generate-notification-assets.js",
     "test": "node --test"
   },
   "optionalDependencies": {
@@ -14,5 +15,8 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0"
   }
 }

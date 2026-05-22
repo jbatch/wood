@@ -18,12 +18,16 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     self.registration.showNotification(data.title || "Wood", {
       body: data.body || "You got Wood",
-      icon: "/icon.svg",
-      badge: "/icon.svg",
+      icon: data.icon || "/icon.svg",
+      badge: data.badge || "/notifications/wood-badge.png",
+      vibrate: data.vibrate,
+      actions: data.actions || [],
       tag: data.woodId || `wood-${Date.now()}`,
       renotify: true,
       data: {
         url: data.url || "/",
+        styleId: data.styleId || null,
+        action: data.actions?.[0]?.action || null,
       },
     }),
   );
@@ -52,6 +56,10 @@ async function recordPush(data) {
     title: data.title || "Wood",
     body: data.body || "",
     url: data.url || "/",
+    icon: data.icon || "",
+    badge: data.badge || "",
+    styleId: data.styleId || "",
+    actions: data.actions || [],
   });
   await cache.put(
     "/push-events",

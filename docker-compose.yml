@@ -1,0 +1,21 @@
+services:
+  wood:
+    build: .
+    container_name: wood
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: "3000"
+      HOST: "0.0.0.0"
+      WOOD_BASE_URL: "${WOOD_BASE_URL:-http://localhost:3000}"
+      WOOD_DB_FILE: "/app/data/wood.sqlite"
+      WOOD_SESSION_SECRET: "${WOOD_SESSION_SECRET:-change-me}"
+      WOOD_VAPID_PUBLIC_KEY: "${WOOD_VAPID_PUBLIC_KEY:-}"
+      WOOD_VAPID_PRIVATE_KEY: "${WOOD_VAPID_PRIVATE_KEY:-}"
+      WOOD_VAPID_SUBJECT: "${WOOD_VAPID_SUBJECT:-mailto:admin@example.com}"
+    volumes:
+      - wood-data:/app/data
+
+volumes:
+  wood-data:
