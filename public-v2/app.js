@@ -5,9 +5,13 @@ const state = {
   data: null,
   error: "",
   pushStatus: null,
+  admin: null,
+  debug: null,
   pollTimer: null,
   polling: false,
   view: "home",        // "home" | "history"
+  homeTab: "friends",
+  adminTab: "overview",
   historyFriendId: null,
   historyData: null,
   showAddSheet: false,
@@ -35,11 +39,16 @@ async function init() {
 async function loadApp() {
   state.data = await api("/api/app");
   state.error = "";
+  if (state.data.user.role === "admin") {
+    state.admin = await api("/api/admin");
+    state.debug = await api("/api/admin/debug");
+  }
   await refreshPushStatus();
 }
 
 function render() {
   if (!state.session?.user) { renderAuth(); return; }
+  if (location.pathname === "/admin" && state.data?.user.role === "admin") { renderAdmin(); return; }
   if (state.view === "history") { renderHistory(); return; }
   renderHome();
 }
@@ -109,19 +118,20 @@ function renderHome() {
         <div class="app-wordmark"><span>W</span>ood</div>
         <div class="header-actions">
           ${pushBtnHtml()}
-          ${d.user.role === "admin" ? `<button class="icon-btn" id="admin-btn" title="Admin">⚙</button>` : ""}
           <button class="icon-btn" id="logout-btn" title="Log out">↩</button>
         </div>
       </header>
 
       <div class="scroll-content" id="scroll-area">
-        ${statsBarHtml(d.stats)}
-        ${requestsHtml(d)}
+        ${state.homeTab === "stats" ? homeStatsHtml(d) : `
+          ${statsBarHtml(d.stats)}
+          ${requestsHtml(d)}
+          ${friendsListHtml(d.friends)}
+        `}
         ${state.error ? `<div class="error-banner">${escHtml(state.error)}</div>` : ""}
-        ${friendsListHtml(d.friends)}
       </div>
 
-      <button class="fab" id="add-btn" title="Add friend">+</button>
+      ${mainNavHtml()}
       ${state.showAddSheet ? addSheetHtml() : ""}
     </div>
   `;
@@ -141,6 +151,46 @@ function statsBarHtml(stats) {
       <div class="stat-pill"><strong>${stats.friends}</strong><span>friends</span></div>
       <div class="stat-pill"><strong>${fav}</strong><span>fave</span></div>
     </div>
+  `;
+}
+
+function homeStatsHtml(d) {
+  const stats = d.stats || {};
+  const fav = stats.favourite_wooder ? escHtml(stats.favourite_wooder.username) : "None yet";
+  return `
+    <div class="section-head">Stats</div>
+    <div class="metric-grid">
+      <div class="metric-card"><strong>${stats.woods_sent || 0}</strong><span>Woods sent</span></div>
+      <div class="metric-card"><strong>${stats.woods_received || 0}</strong><span>Received</span></div>
+      <div class="metric-card"><strong>${stats.current_longest_streak || 0}</strong><span>Current streak</span></div>
+      <div class="metric-card"><strong>${stats.longest_streak || 0}</strong><span>Best streak</span></div>
+      <div class="metric-card"><strong>${stats.long_woods_sent || 0}</strong><span>Long Woods</span></div>
+      <div class="metric-card"><strong>${stats.seasonal_woods_sent || 0}</strong><span>Seasonal</span></div>
+      <div class="metric-card wide"><strong>${stats.friends || 0}</strong><span>Friends</span></div>
+      <div class="metric-card wide"><strong>${fav}</strong><span>Favourite Wooder</span></div>
+    </div>
+  `;
+}
+
+function mainNavHtml() {
+  const isAdmin = state.data?.user?.role === "admin";
+  return `
+    <nav class="bottom-tabs" aria-label="Main">
+      <button class="tab-btn ${state.homeTab === "friends" ? "active" : ""}" data-home-tab="friends">
+        <span class="tab-icon">●</span><span>Friends</span>
+      </button>
+      <button class="tab-btn ${state.homeTab === "stats" ? "active" : ""}" data-home-tab="stats">
+        <span class="tab-icon">◆</span><span>Stats</span>
+      </button>
+      <button class="tab-btn primary-tab" data-action="add-friend">
+        <span class="tab-icon">＋</span><span>Add</span>
+      </button>
+      ${isAdmin ? `
+        <button class="tab-btn" data-route="/admin">
+          <span class="tab-icon">⚙</span><span>Admin</span>
+        </button>
+      ` : ""}
+    </nav>
   `;
 }
 
@@ -297,9 +347,18 @@ function pushBtnHtml() {
 
 function bindHome() {
   document.querySelector("#logout-btn")?.addEventListener("click", logout);
-  document.querySelector("#admin-btn")?.addEventListener("click", () => {
+
+  document.querySelectorAll("[data-home-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.homeTab = btn.dataset.homeTab;
+      renderHome();
+    });
+  });
+
+  document.querySelector("[data-route='/admin']")?.addEventListener("click", async () => {
     history.pushState(null, "", "/admin");
-    location.reload();
+    await ensureAdminData();
+    render();
   });
 
   document.querySelector("#push-btn")?.addEventListener("click", async () => {
@@ -313,7 +372,7 @@ function bindHome() {
     render();
   });
 
-  document.querySelector("#add-btn").addEventListener("click", () => {
+  document.querySelector("[data-action='add-friend']")?.addEventListener("click", () => {
     state.showAddSheet = true;
     state.addError = "";
     renderHome();
@@ -650,12 +709,302 @@ function woodEmojiForType(type, label) {
   return "🪵";
 }
 
+// ─── Admin ───────────────────────────────────────────────
+
+async function ensureAdminData() {
+  if (state.data?.user?.role !== "admin") return;
+  if (!state.admin) state.admin = await api("/api/admin");
+  if (!state.debug) state.debug = await api("/api/admin/debug");
+}
+
+function renderAdmin() {
+  if (!state.admin) {
+    app.innerHTML = `
+      <div class="shell">
+        <header class="app-header">
+          <div class="app-wordmark"><span>W</span>ood Admin</div>
+          <button class="icon-btn" data-route="/" title="Back">↩</button>
+        </header>
+        <div class="empty-state"><p>Loading admin…</p></div>
+      </div>
+    `;
+    ensureAdminData().then(render).catch((err) => {
+      state.error = humanErr(err.message);
+      renderHome();
+    });
+    return;
+  }
+
+  app.innerHTML = `
+    <div class="shell admin-shell">
+      <header class="app-header">
+        <div class="app-wordmark"><span>W</span>ood Admin</div>
+        <div class="header-actions">
+          <button class="icon-btn" data-route="/" title="App">⌂</button>
+          <button class="icon-btn" id="logout-btn" title="Log out">↩</button>
+        </div>
+      </header>
+      <div class="scroll-content admin-content">
+        ${state.error ? `<div class="error-banner">${escHtml(state.error)}</div>` : ""}
+        ${adminPanelHtml()}
+      </div>
+      ${adminNavHtml()}
+    </div>
+  `;
+  bindAdmin();
+}
+
+function adminPanelHtml() {
+  if (state.adminTab === "invites") return adminInvitesHtml();
+  if (state.adminTab === "users") return adminUsersHtml();
+  if (state.adminTab === "debug") return adminDebugHtml();
+  return adminOverviewHtml();
+}
+
+function adminNavHtml() {
+  const tabs = [
+    ["overview", "●", "Overview"],
+    ["invites", "＋", "Invites"],
+    ["users", "◆", "Users"],
+    ["debug", "⋯", "Debug"],
+  ];
+  return `
+    <nav class="bottom-tabs" aria-label="Admin">
+      ${tabs.map(([id, icon, label]) => `
+        <button class="tab-btn ${state.adminTab === id ? "active" : ""}" data-admin-tab="${id}">
+          <span class="tab-icon">${icon}</span><span>${label}</span>
+        </button>
+      `).join("")}
+    </nav>
+  `;
+}
+
+function adminOverviewHtml() {
+  const admin = state.admin;
+  return `
+    <div class="section-head">Overview</div>
+    <div class="metric-grid">
+      <div class="metric-card"><strong>${admin.stats.total_users}</strong><span>Users</span></div>
+      <div class="metric-card"><strong>${admin.stats.total_woods}</strong><span>Woods</span></div>
+      <div class="metric-card"><strong>${admin.stats.woods_today}</strong><span>Today</span></div>
+      <div class="metric-card"><strong>${admin.stats.active_streaks}</strong><span>Streaks</span></div>
+    </div>
+    <div class="section-head">System</div>
+    <form class="admin-card form-card" id="config-form">
+      <div class="sheet-field">
+        <div class="field-label">Cooldown hours</div>
+        <input class="field-input" name="cooldown_hours" type="number" min="1" max="720" value="${admin.config.cooldown_hours}" />
+      </div>
+      <label class="toggle-row">
+        <span>
+          <strong>Seasonal themes</strong>
+          <small>Use server-side Wood variants</small>
+        </span>
+        <input name="seasonal_enabled" type="checkbox" ${admin.config.seasonal_enabled ? "checked" : ""} />
+      </label>
+      <button class="btn-primary" type="submit">Save config</button>
+    </form>
+  `;
+}
+
+function adminInvitesHtml() {
+  const invites = state.admin.invites.slice().reverse();
+  return `
+    <div class="section-head">Generate</div>
+    <form class="admin-card invite-form" id="invite-form">
+      <div class="compact-fields">
+        <div class="sheet-field">
+          <div class="field-label">Count</div>
+          <input class="field-input" name="count" type="number" min="1" max="50" value="1" />
+        </div>
+        <div class="sheet-field">
+          <div class="field-label">Days</div>
+          <input class="field-input" name="days" type="number" min="1" max="90" value="7" />
+        </div>
+      </div>
+      <button class="btn-primary" type="submit">Generate invites</button>
+    </form>
+    <div class="section-head">Invites</div>
+    <div class="admin-list">
+      ${invites.length ? invites.map(inviteCardHtml).join("") : `<div class="empty-state small-empty"><p>No invites yet</p></div>`}
+    </div>
+  `;
+}
+
+function inviteCardHtml(invite) {
+  return `
+    <div class="admin-card invite-card">
+      <div class="admin-card-main">
+        <div class="admin-title">${escHtml(invite.status)}</div>
+        <div class="admin-sub">${escHtml(invite.url)}</div>
+        <div class="admin-meta">Expires ${formatDate(invite.expires_at)}</div>
+      </div>
+      ${invite.status === "unused" ? `<button class="chip-btn" data-invite="${invite.id}">Revoke</button>` : ""}
+    </div>
+  `;
+}
+
+function adminUsersHtml() {
+  const users = state.admin.users;
+  return `
+    <div class="section-head">Users</div>
+    <div class="admin-list">
+      ${users.map(userCardHtml).join("")}
+    </div>
+  `;
+}
+
+function userCardHtml(user) {
+  return `
+    <div class="admin-card user-card">
+      <div class="admin-card-main">
+        <div class="admin-title">${escHtml(user.username)} ${user.role === "admin" ? `<span class="role-chip">admin</span>` : ""}</div>
+        <div class="admin-sub">${escHtml(user.email)}</div>
+        <div class="admin-meta">
+          ${user.suspended ? "Suspended" : "Active"} · ${user.friend_count} friends · ${user.woods_sent}/${user.woods_received} Woods · 🔥 ${user.current_longest_streak}
+        </div>
+      </div>
+      <div class="admin-actions">
+        <button class="chip-btn accent" data-user="${user.id}" data-admin-action="test-push">Push</button>
+        <button class="chip-btn" data-user="${user.id}" data-admin-action="${user.suspended ? "unsuspend" : "suspend"}">${user.suspended ? "Unsuspend" : "Suspend"}</button>
+        <button class="chip-btn" data-user="${user.id}" data-admin-action="${user.role === "admin" ? "demote" : "promote"}">${user.role === "admin" ? "Demote" : "Promote"}</button>
+      </div>
+    </div>
+  `;
+}
+
+function adminDebugHtml() {
+  return `
+    <div class="section-head">Push tools</div>
+    <div class="admin-card debug-actions">
+      <button class="chip-btn accent" data-action="refresh-debug">Refresh debug</button>
+      <button class="chip-btn danger-chip" data-action="clear-push">Clear push subs</button>
+    </div>
+    <div class="section-head">Notification tests</div>
+    <div class="admin-list">
+      ${notificationStyleTestsHtml()}
+    </div>
+    <div class="section-head">Recent debug</div>
+    <div class="admin-list">
+      ${debugEntriesHtml()}
+    </div>
+  `;
+}
+
+function notificationStyleTestsHtml() {
+  const users = state.admin.users.filter((user) => !user.suspended);
+  const styles = state.admin.notification_styles || [];
+  if (!users.length || !styles.length) return `<div class="empty-state small-empty"><p>No notification tests available</p></div>`;
+  return styles.map((style) => `
+    <div class="admin-card notification-card">
+      <img src="${escHtml(style.icon)}" alt="" width="44" height="44" />
+      <div class="admin-card-main">
+        <div class="admin-title">${escHtml(style.id)}</div>
+        <div class="admin-meta">Icon${style.vibrate ? " · vibration" : ""}</div>
+        <div class="admin-actions inline-actions">
+          ${users.map((user) => `
+            <button class="chip-btn" data-user="${user.id}" data-style="${style.id}">${escHtml(user.username)}</button>
+          `).join("")}
+        </div>
+      </div>
+    </div>
+  `).join("");
+}
+
+function debugEntriesHtml() {
+  const entries = state.debug?.entries || [];
+  if (!entries.length) return `<div class="empty-state small-empty"><p>No debug events yet</p></div>`;
+  return entries.slice(0, 40).map((entry) => `
+    <div class="admin-card debug-card">
+      <div class="admin-title">${escHtml(entry.type)}</div>
+      <div class="admin-meta">${formatDate(entry.at)}</div>
+      <code>${escHtml(JSON.stringify(without(entry, ["at", "type"])))}</code>
+    </div>
+  `).join("");
+}
+
+function bindAdmin() {
+  document.querySelector("#logout-btn")?.addEventListener("click", logout);
+  document.querySelector("[data-route='/']")?.addEventListener("click", () => {
+    history.pushState(null, "", "/");
+    state.view = "home";
+    render();
+  });
+  document.querySelectorAll("[data-admin-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.adminTab = btn.dataset.adminTab;
+      renderAdmin();
+    });
+  });
+  document.querySelector("[data-action='refresh-debug']")?.addEventListener("click", async () => {
+    state.debug = await api("/api/admin/debug");
+    renderAdmin();
+  });
+  document.querySelector("[data-action='clear-push']")?.addEventListener("click", async () => {
+    state.admin = await api("/api/admin/push-subscriptions/clear", { method: "POST" });
+    state.debug = await api("/api/admin/debug");
+    renderAdmin();
+  });
+  document.querySelector("#invite-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const payload = Object.fromEntries(new FormData(event.currentTarget).entries());
+    await api("/api/admin/invites", { method: "POST", body: payload });
+    state.admin = await api("/api/admin");
+    renderAdmin();
+  });
+  document.querySelector("#config-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    state.admin = await api("/api/admin/config", {
+      method: "POST",
+      body: {
+        cooldown_hours: form.get("cooldown_hours"),
+        seasonal_enabled: form.get("seasonal_enabled") === "on",
+      },
+    });
+    await loadApp();
+    renderAdmin();
+  });
+  document.querySelectorAll("[data-invite]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      state.admin = await api(`/api/admin/invites/${btn.dataset.invite}/revoke`, { method: "POST" });
+      renderAdmin();
+    });
+  });
+  document.querySelectorAll("[data-admin-action]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const response = await api(`/api/admin/users/${btn.dataset.user}/${btn.dataset.adminAction}`, { method: "POST" });
+      if (btn.dataset.adminAction === "test-push") {
+        state.admin = response.admin;
+        state.error = `Test push sent: ${response.result.sent}/${response.result.attempted}`;
+        state.debug = await api("/api/admin/debug");
+      } else {
+        state.admin = await api("/api/admin");
+      }
+      renderAdmin();
+    });
+  });
+  document.querySelectorAll("[data-style]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const response = await api(`/api/admin/users/${btn.dataset.user}/test-push`, {
+        method: "POST",
+        body: { styleId: btn.dataset.style },
+      });
+      state.admin = response.admin;
+      state.error = `Test ${btn.dataset.style} sent: ${response.result.sent}/${response.result.attempted}`;
+      state.debug = await api("/api/admin/debug");
+      renderAdmin();
+    });
+  });
+}
+
 // ─── Mutations & polling ─────────────────────────────────
 
 async function mutate(url, body = {}) {
   try {
     state.data = await api(url, { method: "POST", body });
     state.error = "";
+    if (state.data.user.role === "admin") state.admin = await api("/api/admin");
     render();
   } catch (err) {
     state.error = humanErr(err.message);
@@ -668,6 +1017,8 @@ async function logout() {
   state.session = { user: null };
   state.data = null;
   state.view = "home";
+  state.admin = null;
+  state.debug = null;
   stopPolling();
   history.replaceState(null, "", "/");
   render();
@@ -687,7 +1038,12 @@ function stopPolling() {
 }
 
 async function poll() {
-  if (state.polling || !state.session?.user || document.visibilityState === "hidden") return;
+  if (
+    state.polling ||
+    !state.session?.user ||
+    location.pathname === "/admin" ||
+    document.visibilityState === "hidden"
+  ) return;
   state.polling = true;
   try {
     state.data = await api("/api/app");
@@ -774,6 +1130,16 @@ function countdown(iso) {
   return h ? `${h}h ${m}m` : `${m}m`;
 }
 
+function formatDate(iso) {
+  if (!iso) return "Never";
+  return new Date(iso).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function escHtml(v) {
   return String(v ?? "")
     .replaceAll("&", "&amp;")
@@ -784,6 +1150,12 @@ function escHtml(v) {
 
 function humanErr(v) {
   return String(v).replaceAll("_", " ");
+}
+
+function without(object, keys) {
+  const copy = { ...object };
+  for (const key of keys) delete copy[key];
+  return copy;
 }
 
 function b64ToUint8(b64) {

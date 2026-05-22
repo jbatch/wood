@@ -19,6 +19,14 @@ The constraint that makes it interesting: you can't send someone another Wood un
 - Private and invite-only — no public sign-up
 - Low maintenance infrastructure
 
+### Current UI Direction
+
+- Build new product work in `public-v2` first, following the new dark green mobile-first aesthetic.
+- Keep the app simple and thumb-friendly: one primary action per moment, compact text, and no desktop-first tables.
+- Use restrained, professional mobile animations: quick press feedback, smooth sheet/tray motion, and no decorative motion that slows the loop down.
+- Prefer the bottom icon tab tray pattern for top-level navigation, inspired by old Android/Material bottom menus without pulling in a UI framework.
+- Admin UI should follow the same v2 aesthetic instead of feeling like a separate back-office web page.
+
 ---
 
 ## 3. Users & Roles
