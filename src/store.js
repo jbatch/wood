@@ -4,6 +4,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { config } from "./config.js";
 import { hashPassword } from "./auth.js";
+import { ensureAchievementDefinitions, normalizeAchievementDef } from "./achievements.js";
 import { id, inviteCode } from "./ids.js";
 import { addDaysIso, nowIso } from "./time.js";
 import { rebuildStreaksFromWoods } from "./woodRules.js";
@@ -57,6 +58,7 @@ export async function createStore(file = config.dbFile) {
   if (store.db.woods.length && !store.db.streaks.length) {
     await store.write((db) => rebuildStreaksFromWoods(db));
   }
+  await store.write((db) => ensureAchievementDefinitions(db));
   store.db = loadSnapshot(sqlite);
   return store;
 }
@@ -150,6 +152,27 @@ function migrate(sqlite) {
       FOREIGN KEY (user_b_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS achievements_def (
+      id TEXT PRIMARY KEY,
+      slug TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL,
+      icon TEXT NOT NULL,
+      secret INTEGER NOT NULL DEFAULT 0,
+      criteria_type TEXT NOT NULL,
+      criteria_value TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS achievements_earned (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      achievement_id TEXT NOT NULL,
+      earned_at TEXT NOT NULL,
+      UNIQUE (user_id, achievement_id),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (achievement_id) REFERENCES achievements_def(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS app_config (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       config_json TEXT NOT NULL
@@ -221,6 +244,8 @@ function loadSnapshot(sqlite) {
     woods: sqlite.prepare("SELECT * FROM woods ORDER BY sent_at, id").all(),
     mutes: sqlite.prepare("SELECT * FROM mutes ORDER BY id").all(),
     streaks: sqlite.prepare("SELECT * FROM streaks ORDER BY updated_at, id").all(),
+    achievements_def: sqlite.prepare("SELECT * FROM achievements_def ORDER BY rowid").all(),
+    achievements_earned: sqlite.prepare("SELECT * FROM achievements_earned ORDER BY earned_at, id").all(),
     config: configRow ? JSON.parse(configRow.config_json) : initialConfig,
   });
 }
@@ -254,6 +279,8 @@ function normalizeDb(db) {
         ? streak.milestones_sent
         : JSON.parse(streak.milestones_sent || "[]"),
     })),
+    achievements_def: (db.achievements_def || []).map(normalizeAchievementDef),
+    achievements_earned: db.achievements_earned || [],
     config: { ...initialConfig, ...(db.config || {}) },
   };
 }
@@ -262,6 +289,8 @@ function persistSnapshot(sqlite, db) {
   const snapshot = normalizeDb(db);
   const transaction = sqlite.transaction(() => {
     sqlite.exec(`
+      DELETE FROM achievements_earned;
+      DELETE FROM achievements_def;
       DELETE FROM mutes;
       DELETE FROM streaks;
       DELETE FROM woods;
@@ -361,6 +390,35 @@ function persistSnapshot(sqlite, db) {
         at_risk: streak.at_risk ? 1 : 0,
         milestones_sent: JSON.stringify(streak.milestones_sent || []),
       });
+    }
+
+    const insertAchievementDef = sqlite.prepare(`
+      INSERT INTO achievements_def
+        (
+          id, slug, name, description, icon, secret, criteria_type, criteria_value
+        )
+      VALUES
+        (
+          @id, @slug, @name, @description, @icon, @secret, @criteria_type,
+          @criteria_value
+        )
+    `);
+    for (const achievement of snapshot.achievements_def) {
+      insertAchievementDef.run({
+        ...achievement,
+        secret: achievement.secret ? 1 : 0,
+        criteria_value: String(achievement.criteria_value),
+      });
+    }
+
+    const insertAchievementEarned = sqlite.prepare(`
+      INSERT OR IGNORE INTO achievements_earned
+        (id, user_id, achievement_id, earned_at)
+      VALUES
+        (@id, @user_id, @achievement_id, @earned_at)
+    `);
+    for (const earned of snapshot.achievements_earned) {
+      insertAchievementEarned.run(earned);
     }
 
     sqlite

@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  achievementProgress,
+  ensureAchievementDefinitions,
+  evaluateAchievements,
+} from "../src/achievements.js";
+import {
   canSendWood,
   notificationStyles,
   pairStats,
@@ -30,6 +35,8 @@ function dbWithWoods(woods = []) {
     ],
     woods,
     streaks: [],
+    achievements_def: [],
+    achievements_earned: [],
     users: [
       { id: "a", username: "alice", created_at: "2026-05-01T00:00:00.000Z" },
       { id: "b", username: "bob", created_at: "2026-05-01T00:00:00.000Z" },
@@ -39,6 +46,56 @@ function dbWithWoods(woods = []) {
 
 test("a user can wood an accepted friend with no prior outgoing wood", () => {
   assert.equal(canSendWood(dbWithWoods(), "a", "b").ok, true);
+});
+
+test("achievement definitions can be earned from wood volume", () => {
+  const db = dbWithWoods([
+    {
+      sender_id: "a",
+      recipient_id: "b",
+      sent_at: "2026-05-22T00:00:00.000Z",
+      type: "normal",
+    },
+  ]);
+  ensureAchievementDefinitions(db);
+
+  const earned = evaluateAchievements(db, "a", {
+    earnedAt: "2026-05-22T00:00:01.000Z",
+  });
+  const progress = achievementProgress(db, "a");
+
+  assert.deepEqual(earned.map((achievement) => achievement.slug), [
+    "first-knock",
+    "youve-got-a-friend",
+  ]);
+  assert.equal(progress.find((achievement) => achievement.slug === "first-knock").earned, true);
+});
+
+test("achievements cover special reply and long wood rituals", () => {
+  const db = dbWithWoods([
+    {
+      sender_id: "b",
+      recipient_id: "a",
+      sent_at: "2026-05-22T00:00:00.000Z",
+      type: "normal",
+      hold_duration_ms: 0,
+    },
+    {
+      sender_id: "a",
+      recipient_id: "b",
+      sent_at: "2026-05-22T00:00:08.000Z",
+      type: "long",
+      hold_duration_ms: 10000,
+    },
+  ]);
+  ensureAchievementDefinitions(db);
+
+  const earned = evaluateAchievements(db, "a");
+  const slugs = earned.map((achievement) => achievement.slug);
+
+  assert.ok(slugs.includes("long-game"));
+  assert.ok(slugs.includes("speedy-reply"));
+  assert.ok(slugs.includes("mutual"));
 });
 
 test("a user is on cooldown after sending until the timeout expires", () => {

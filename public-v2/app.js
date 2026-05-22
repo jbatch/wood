@@ -33,6 +33,8 @@ async function init() {
   }
   state.session = await api("/api/session");
   if (state.session.user) {
+    const params = new URLSearchParams(location.search);
+    if (params.get("tab") === "stats") state.homeTab = "stats";
     await loadApp();
     startPolling();
   }
@@ -171,6 +173,31 @@ function homeStatsHtml(d) {
       <div class="metric-card"><strong>${stats.seasonal_woods_sent || 0}</strong><span>Seasonal</span></div>
       <div class="metric-card wide"><strong>${stats.friends || 0}</strong><span>Friends</span></div>
       <div class="metric-card wide"><strong>${fav}</strong><span>Favourite Wooder</span></div>
+    </div>
+    ${achievementsHtml(d.achievements || [])}
+  `;
+}
+
+function achievementsHtml(achievements) {
+  const earned = achievements.filter((achievement) => achievement.earned).length;
+  return `
+    <div class="section-head">Achievements ${earned}/${achievements.length}</div>
+    <div class="achievement-grid">
+      ${achievements.map(achievementCardHtml).join("")}
+    </div>
+  `;
+}
+
+function achievementCardHtml(achievement) {
+  const earned = achievement.earned;
+  return `
+    <div class="achievement-card ${earned ? "earned" : ""}">
+      <div class="achievement-icon">${escHtml(achievement.icon)}</div>
+      <div class="achievement-copy">
+        <strong>${escHtml(achievement.name)}</strong>
+        <span>${escHtml(achievement.description)}</span>
+        ${earned ? `<small>${formatDate(achievement.earned_at)}</small>` : ""}
+      </div>
     </div>
   `;
 }
@@ -931,14 +958,23 @@ function adminUsersHtml() {
 }
 
 function userCardHtml(user) {
+  const achievements = state.admin.achievements || [];
   return `
     <div class="admin-card user-card">
       <div class="admin-card-main">
         <div class="admin-title">${escHtml(user.username)} ${user.role === "admin" ? `<span class="role-chip">admin</span>` : ""}</div>
         <div class="admin-sub">${escHtml(user.email)}</div>
         <div class="admin-meta">
-          ${user.suspended ? "Suspended" : "Active"} · ${user.friend_count} friends · ${user.woods_sent}/${user.woods_received} Woods · 🔥 ${user.current_longest_streak}
+          ${user.suspended ? "Suspended" : "Active"} · ${user.friend_count} friends · ${user.woods_sent}/${user.woods_received} Woods · ${user.achievements_earned || 0} achievements · 🔥 ${user.current_longest_streak}
         </div>
+      </div>
+      <div class="achievement-award">
+        <select class="field-input" data-achievement-select="${user.id}" aria-label="Achievement">
+          ${achievements.map((achievement) => `
+            <option value="${escHtml(achievement.slug)}">${escHtml(achievement.name)}</option>
+          `).join("")}
+        </select>
+        <button class="chip-btn" data-award-achievement="${user.id}">Award</button>
       </div>
       <div class="admin-actions">
         <button class="chip-btn accent" data-user="${user.id}" data-admin-action="test-push">Push</button>
@@ -1057,6 +1093,18 @@ function bindAdmin() {
       } else {
         state.admin = await api("/api/admin");
       }
+      renderAdmin();
+    });
+  });
+  document.querySelectorAll("[data-award-achievement]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const userId = btn.dataset.awardAchievement;
+      const select = document.querySelector(`[data-achievement-select="${CSS.escape(userId)}"]`);
+      state.admin = await api(`/api/admin/users/${userId}/achievements`, {
+        method: "POST",
+        body: { slug: select?.value },
+      });
+      await loadApp();
       renderAdmin();
     });
   });

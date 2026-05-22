@@ -20,6 +20,12 @@ import {
   verifyPassword,
   verifySession,
 } from "./auth.js";
+import {
+  achievementDefinitions,
+  achievementProgress,
+  awardAchievements,
+  evaluateAchievements,
+} from "./achievements.js";
 import { id, inviteCode } from "./ids.js";
 import { addDaysIso, isPast, nowIso } from "./time.js";
 import { createStore } from "./store.js";
@@ -324,6 +330,7 @@ function appState(user) {
   return {
     user: publicUser(user),
     stats: userStats(db, user.id),
+    achievements: achievementProgress(db, user.id),
     friends,
     incomingRequests: db.friendships
       .filter(
@@ -439,6 +446,7 @@ async function requestFriend(user, res, body) {
 }
 
 async function respondToFriendRequest(user, res, friendshipId, action) {
+  let achievementUsers = [];
   const result = await store.write((db) => {
     const friendship = db.friendships.find(
       (candidate) =>
@@ -449,11 +457,17 @@ async function respondToFriendRequest(user, res, friendshipId, action) {
     if (!friendship) return { error: "not_found" };
     friendship.status = action === "accept" ? "accepted" : "rejected";
     friendship.updated_at = nowIso();
+    if (action === "accept") {
+      achievementUsers = [friendship.requester_id, friendship.addressee_id];
+    }
     return { friendship };
   });
   if (result.error) {
     sendJson(res, 404, { error: result.error });
     return;
+  }
+  if (achievementUsers.length) {
+    await evaluateAndNotifyAchievements(achievementUsers);
   }
   sendJson(res, 200, appState(user));
 }
@@ -616,6 +630,7 @@ async function sendWood(user, res, recipientId, body) {
     await notifyStreakMilestone(user, recipient, streakResult.milestone);
   }
 
+  await evaluateAndNotifyAchievements([user.id]);
   sendJson(res, 201, appState(user));
 }
 
@@ -641,6 +656,35 @@ async function notifyStreakMilestone(sender, recipient, count) {
     senderSent: senderResult.sent,
     recipientSent: recipientResult.sent,
   });
+}
+
+async function evaluateAndNotifyAchievements(userIds) {
+  const uniqueUserIds = [...new Set(userIds)].filter(Boolean);
+  for (const userId of uniqueUserIds) {
+    const earned = await store.write((db) => evaluateAchievements(db, userId));
+    await notifyAchievements(userId, earned);
+  }
+}
+
+async function notifyAchievements(userId, achievements) {
+  if (!achievements.length) return;
+  const user = store.db.users.find((candidate) => candidate.id === userId);
+  if (!user) return;
+  for (const achievement of achievements) {
+    const result = await notifyUser(store.db, userId, {
+      title: "Achievement unlocked",
+      body: `${achievement.name}: ${achievement.description}`,
+      url: "/?tab=stats",
+      achievement: achievement.slug,
+    });
+    debugLog("achievement.unlocked", {
+      userId,
+      username: user.username,
+      achievement: achievement.slug,
+      sent: result.sent,
+      disabled: Boolean(result.disabled),
+    });
+  }
 }
 
 async function handleAdmin(user, req, res, url, body) {
@@ -781,6 +825,22 @@ async function handleAdmin(user, req, res, url, body) {
     return;
   }
 
+  const awardAchievement = url.pathname.match(/^\/api\/admin\/users\/([^/]+)\/achievements$/);
+  if (req.method === "POST" && awardAchievement) {
+    const target = store.db.users.find((candidate) => candidate.id === awardAchievement[1]);
+    if (!target) {
+      sendJson(res, 404, { error: "not_found" });
+      return;
+    }
+    const slug = String(body.slug || "");
+    const earned = await store.write((db) =>
+      awardAchievements(db, target.id, [slug], nowIso()),
+    );
+    await notifyAchievements(target.id, earned);
+    sendJson(res, 200, adminState());
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/admin/notification-styles") {
     sendJson(res, 200, { styles: notificationStyles() });
     return;
@@ -823,10 +883,12 @@ function adminState() {
       woods_sent: db.woods.filter((wood) => wood.sender_id === user.id).length,
       woods_received: db.woods.filter((wood) => wood.recipient_id === user.id).length,
       current_longest_streak: userStats(db, user.id).current_longest_streak,
+      achievements_earned: achievementProgress(db, user.id).filter((achievement) => achievement.earned).length,
     })),
     invites: db.invites.map(publicInvite),
     config: db.config,
     notification_styles: notificationStyles(),
+    achievements: achievementDefinitions(),
     stats: {
       total_users: db.users.length,
       total_woods: db.woods.length,
