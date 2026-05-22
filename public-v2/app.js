@@ -663,8 +663,8 @@ function historyComposerHtml(friend) {
       <div class="history-composer">
         <button class="composer-icon" type="button" data-keyboard-open title="Camera">📷</button>
         <button class="composer-input" id="composer-input" type="button" aria-label="Message">
-          <span class="composer-placeholder">Message</span>
           <span class="fake-cursor"></span>
+          <span class="composer-placeholder">Message</span>
         </button>
         <button class="composer-icon" type="button" data-keyboard-open title="Mic">🎙</button>
       </div>
