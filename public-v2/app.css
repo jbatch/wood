@@ -844,7 +844,7 @@ html, body {
   background: #0a130d;
   border: 1px solid var(--border);
   border-radius: 24px 24px 0 0;
-  animation: keyboardRise 220ms cubic-bezier(0.32, 0.72, 0, 1);
+  animation: keyboardRise 280ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 @keyframes keyboardRise {
