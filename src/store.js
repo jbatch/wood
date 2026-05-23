@@ -72,7 +72,7 @@ function migrate(sqlite) {
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'user',
       suspended INTEGER NOT NULL DEFAULT 0,
-      favourite_wood TEXT NOT NULL DEFAULT 'oak',
+      favourite_wood TEXT,
       birthday_month INTEGER,
       birthday_day INTEGER,
       birthday_visible INTEGER NOT NULL DEFAULT 0,
@@ -228,7 +228,7 @@ function migrate(sqlite) {
   `);
 
   ensureColumn(sqlite, "users", "deleted_at", "TEXT");
-  ensureColumn(sqlite, "users", "favourite_wood", "TEXT NOT NULL DEFAULT 'oak'");
+  ensureColumn(sqlite, "users", "favourite_wood", "TEXT");
   ensureColumn(sqlite, "users", "birthday_month", "INTEGER");
   ensureColumn(sqlite, "users", "birthday_day", "INTEGER");
   ensureColumn(sqlite, "users", "birthday_visible", "INTEGER NOT NULL DEFAULT 0");
@@ -265,7 +265,7 @@ async function seedFirstAdmin(store) {
       password_hash: await hashPassword("wood-admin"),
       role: "admin",
       suspended: false,
-      favourite_wood: "oak",
+      favourite_wood: "",
       birthday_month: null,
       birthday_day: null,
       birthday_visible: false,
@@ -313,7 +313,7 @@ function normalizeDb(db) {
     users: (db.users || []).map((user) => ({
       ...user,
       suspended: Boolean(user.suspended),
-      favourite_wood: user.favourite_wood || "oak",
+      favourite_wood: user.favourite_wood || "",
       birthday_month: user.birthday_month ?? null,
       birthday_day: user.birthday_day ?? null,
       birthday_visible: Boolean(user.birthday_visible),

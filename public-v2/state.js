@@ -17,6 +17,7 @@ export const state = {
   profileUserId: null,
   profileData: null,
   profileError: "",
+  profileNotice: "",
   settingsError: "",
   woodKeyboardOpen: false,
   toast: "",

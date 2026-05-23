@@ -1291,6 +1291,19 @@ html, body {
   font-weight: 700;
 }
 
+.profile-notice {
+  min-height: 18px;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.btn-primary:disabled {
+  opacity: 0.42;
+  cursor: default;
+  transform: none;
+}
+
 .profile-detail {
   display: flex;
   align-items: center;

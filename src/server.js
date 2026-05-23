@@ -75,10 +75,47 @@ const REALTIME_HEARTBEAT_MS = 25000;
 const FAVOURITE_WOODS = [
   "oak",
   "pine",
+  "cedar",
+  "walnut",
+  "birch",
+  "maple",
+  "mahogany",
+  "teak",
+  "willow",
+  "ash",
+  "spruce",
+  "redwood",
+  "cherry",
+  "ebony",
+  "rosewood",
+  "bog oak",
+  "ironwood",
+  "snakewood",
+  "purpleheart",
   "balsa",
   "driftwood",
   "plywood",
+  "particleboard",
+  "mdf",
+  "two-by-four",
+  "wooden spoon",
+  "baseball bat",
+  "wizard staff",
+  "ship mast",
+  "ikea dowel",
+  "laminate flooring",
+  "petrified wood",
   "enchanted plywood",
+  "haunted plywood",
+  "cursed mahogany",
+  "weirwood",
+  "whomping willow",
+  "groot",
+  "yggdrasil twig",
+  "the luggage",
+  "morning wood",
+  "one does not simply wood",
+  "the wood between worlds",
   "whatever this app is made of",
 ];
 const FOREVER_SNOOZE_UNTIL = "9999-12-31T23:59:59.000Z";
@@ -409,7 +446,7 @@ async function signup(req, res, body) {
       password_hash: await hashPassword(password),
       role: "user",
       suspended: false,
-      favourite_wood: "oak",
+      favourite_wood: "",
       birthday_month: null,
       birthday_day: null,
       birthday_visible: false,
@@ -567,7 +604,7 @@ async function updateProfile(user, res, body) {
   const favouriteWood =
     Object.hasOwn(body, "favouriteWood")
       ? cleanFavouriteWood(body.favouriteWood)
-      : user.favourite_wood || "oak";
+      : user.favourite_wood || "";
   const birthday = cleanBirthday(body);
   const birthdayVisible = Boolean(body.birthdayVisible);
 
@@ -575,7 +612,7 @@ async function updateProfile(user, res, body) {
     sendJson(res, 400, { error: "invalid_username" });
     return;
   }
-  if (!favouriteWood) {
+  if (favouriteWood === null) {
     sendJson(res, 400, { error: "invalid_favourite_wood" });
     return;
   }
@@ -1590,7 +1627,7 @@ function publicProfile(user, { includePrivate = false } = {}) {
     id: user.id,
     username: user.username,
     memberSince: user.created_at,
-    favouriteWood: cleanFavouriteWood(user.favourite_wood) || "oak",
+    favouriteWood: cleanFavouriteWood(user.favourite_wood) || "",
     birthdayMonth: showBirthday ? user.birthday_month || null : null,
     birthdayDay: showBirthday ? user.birthday_day || null : null,
     birthdayVisible: Boolean(user.birthday_visible),
@@ -1617,7 +1654,8 @@ function cleanUsername(value) {
 
 function cleanFavouriteWood(value) {
   const clean = String(value || "").trim().toLowerCase();
-  return FAVOURITE_WOODS.includes(clean) ? clean : "";
+  if (!clean) return "";
+  return FAVOURITE_WOODS.includes(clean) ? clean : null;
 }
 
 function cleanBirthday(body) {

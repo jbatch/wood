@@ -55,6 +55,7 @@ This is the active backlog. `docs/PRD.md` is now mostly a product reference for 
   - Treat this as a small profile joke, not a productivity preference.
   - Show it on their public profile.
   - Consider options like oak, pine, balsa, driftwood, plywood, enchanted plywood, or "whatever this app is made of."
+  - Add an achievement for choosing a favourite wood for the first time.
 
 - [ ] Add a Wood Triangle achievement.
   - Unlock when three users form a favourite-friend triangle: A favourites B, B favourites C, and C favourites A.

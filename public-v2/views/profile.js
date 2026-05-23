@@ -23,6 +23,7 @@ export async function openProfile(ctx, userId) {
   state.profileUserId = userId;
   state.profileData = null;
   state.profileError = "";
+  state.profileNotice = "";
   render();
   try {
     state.profileData = await api(`/api/profiles/${userId}`);
@@ -59,6 +60,7 @@ export function renderProfile(ctx) {
     state.view = "home";
     state.profileData = null;
     state.profileError = "";
+    state.profileNotice = "";
     render();
   });
 
@@ -66,6 +68,7 @@ export function renderProfile(ctx) {
     event.preventDefault();
     await saveProfile(ctx, event.currentTarget);
   });
+  bindProfileDirtyState();
 
   document.querySelector("[data-profile-action='history']")?.addEventListener("click", () => {
     ctx.openHistory(state.profileUserId);
@@ -125,6 +128,7 @@ function selfProfileForm(data) {
       <label class="profile-field">
         <span>Favourite wood</span>
         <select class="field-input" name="favouriteWood">
+          <option value="" ${profile.favouriteWood ? "" : "selected"}>Not chosen</option>
           ${options.map((option) => `
             <option value="${escHtml(option)}" ${option === profile.favouriteWood ? "selected" : ""}>${escHtml(titleCase(option))}</option>
           `).join("")}
@@ -146,7 +150,8 @@ function selfProfileForm(data) {
         <span>Show birthday on my profile</span>
       </label>
       <div class="profile-error">${escHtml(state.profileError)}</div>
-      <button class="btn-primary" type="submit">Save profile</button>
+      <div class="profile-notice">${escHtml(state.profileNotice)}</div>
+      <button class="btn-primary" id="profile-save-btn" type="submit" disabled>Save profile</button>
     </form>
   `;
 }
@@ -158,7 +163,7 @@ function friendProfile(data) {
     <section class="profile-panel">
       <div class="profile-detail">
         <span>Favourite wood</span>
-        <strong>${escHtml(titleCase(profile.favouriteWood))}</strong>
+        <strong>${escHtml(profile.favouriteWood ? titleCase(profile.favouriteWood) : "Not chosen")}</strong>
       </div>
       <div class="profile-detail">
         <span>Birthday</span>
@@ -251,11 +256,44 @@ async function saveProfile(ctx, form) {
     state.profileData = await api(`/api/profiles/${state.data.user.id}`);
     state.profileUserId = state.data.user.id;
     state.profileError = "";
+    state.profileNotice = "Saved successfully";
     render();
   } catch (err) {
     state.profileError = humanErr(err.message);
+    state.profileNotice = "";
     render();
   }
+}
+
+function bindProfileDirtyState() {
+  const form = document.querySelector("#profile-form");
+  const saveBtn = document.querySelector("#profile-save-btn");
+  if (!form || !saveBtn) return;
+  const initial = profileFormSignature(form);
+  const update = () => {
+    const dirty = profileFormSignature(form) !== initial;
+    saveBtn.disabled = !dirty;
+    if (dirty && state.profileNotice) {
+      state.profileNotice = "";
+      document.querySelector(".profile-notice").textContent = "";
+    }
+  };
+  form.querySelectorAll("input, select").forEach((control) => {
+    control.addEventListener("input", update);
+    control.addEventListener("change", update);
+  });
+  update();
+}
+
+function profileFormSignature(form) {
+  const data = new FormData(form);
+  return JSON.stringify({
+    username: String(data.get("username") || "").trim(),
+    favouriteWood: data.get("favouriteWood") || "",
+    birthdayMonth: data.get("birthdayMonth") || "",
+    birthdayDay: data.get("birthdayDay") || "",
+    birthdayVisible: Boolean(data.get("birthdayVisible")),
+  });
 }
 
 async function friendAction(ctx, action, { backHome = false } = {}) {
