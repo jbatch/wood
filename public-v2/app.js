@@ -7,6 +7,8 @@ import { ensureAdminData, renderAdmin } from "./views/admin.js";
 import { renderAuth } from "./views/auth.js";
 import { renderHome } from "./views/home.js";
 import { openHistory, renderHistory, scrollHistoryToBottom } from "./views/history.js";
+import { openProfile, renderProfile } from "./views/profile.js";
+import { openSettings, renderSettings } from "./views/settings.js";
 
 const app = document.querySelector("#app");
 const APP_POLL_INTERVAL_MS = 60000;
@@ -23,6 +25,8 @@ const ctx = {
   logout,
   mutate,
   openHistory: (friendId) => openHistory(ctx, friendId),
+  openProfile: (userId) => openProfile(ctx, userId),
+  openSettings: () => openSettings(ctx),
   refreshPushStatus,
   render,
   renderHome: () => renderHome(ctx),
@@ -74,6 +78,14 @@ function render() {
     renderHistory(ctx);
     return;
   }
+  if (state.view === "profile") {
+    renderProfile(ctx);
+    return;
+  }
+  if (state.view === "settings") {
+    renderSettings(ctx);
+    return;
+  }
   renderHome(ctx);
 }
 
@@ -96,6 +108,8 @@ async function logout() {
   state.view = "home";
   state.admin = null;
   state.debug = null;
+  state.profileUserId = null;
+  state.profileData = null;
   stopPolling();
   stopRealtime();
   history.replaceState(null, "", "/");

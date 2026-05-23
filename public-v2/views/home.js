@@ -13,7 +13,7 @@ export function renderHome(ctx) {
         <div class="app-wordmark"><span>W</span>ood</div>
         <div class="header-actions">
           ${pushBtnHtml()}
-          <button class="icon-btn" id="logout-btn" title="Log out">↩</button>
+          <button class="icon-btn" id="settings-btn" title="Settings">⚙</button>
         </div>
       </header>
 
@@ -266,11 +266,11 @@ function friendCardHtml(f) {
         <button class="tray-btn tray-history" data-tray-action="history" data-friend="${f.id}">
           <span class="tray-icon">📋</span>History
         </button>
+        <button class="tray-btn tray-profile" data-tray-action="profile" data-friend="${f.id}">
+          <span class="tray-icon">◉</span>Profile
+        </button>
         <button class="tray-btn tray-mute" data-tray-action="${f.muted ? "unmute" : "mute"}" data-friend="${f.id}">
           <span class="tray-icon">${f.muted ? "🔔" : "🔕"}</span>${f.muted ? "Unmute" : "Mute"}
-        </button>
-        <button class="tray-btn tray-remove" data-tray-action="remove" data-friend="${f.id}">
-          <span class="tray-icon">✕</span>Remove
         </button>
       </div>
       <div
@@ -364,8 +364,8 @@ function pushBtnHtml() {
 }
 
 function bindHome(ctx) {
-  const { api, ensureAdminData, logout, mutate, openHistory, refreshPushStatus, render, saveHomeTab, subscribePush } = ctx;
-  document.querySelector("#logout-btn")?.addEventListener("click", logout);
+  const { api, ensureAdminData, mutate, openHistory, openProfile, openSettings, refreshPushStatus, render, saveHomeTab, subscribePush } = ctx;
+  document.querySelector("#settings-btn")?.addEventListener("click", openSettings);
 
   document.querySelectorAll("[data-home-tab]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -474,6 +474,8 @@ function bindHome(ctx) {
       const friendId = btn.dataset.friend;
       if (action === "history") {
         openHistory(friendId);
+      } else if (action === "profile") {
+        openProfile(friendId);
       } else {
         mutate(`/api/friends/${friendId}/${action}`);
       }
