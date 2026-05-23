@@ -14,9 +14,6 @@ This is the active backlog. `docs/PRD.md` is now mostly a product reference for 
 
 ## Product Follow-ups
 
-- [ ] Show `member_since` somewhere useful.
-  - Likely in the Account screen and public friend-visible profile.
-
 - [ ] Revamp the streak system.
   - Make it clearer what a streak is and why it changed.
   - Show how long the user has before a streak is lost.
@@ -26,12 +23,6 @@ This is the active backlog. `docs/PRD.md` is now mostly a product reference for 
 - [ ] Think through forgotten-password handling without committing to SMTP.
   - Could be admin-assisted reset, one-time recovery codes, or another low-infra private-app path.
 
-- [ ] Add optional birthdays and Birthday Woods.
-  - Users should be able to add a birthday after account creation, including users who joined before the field existed.
-  - On a user's birthday, their friends should see a special Birthday Wood option for the first Wood they send that day.
-  - Add an achievement for sending a Birthday Wood.
-  - Birthday should be editable from Account and visible on the public profile only if the user opts in.
-
 - [ ] Make seasonal events more ingrained.
   - Keep seasonal behavior code-owned rather than fully dynamic, so events can include app decorations, swapped images, special notifications, and UI flourishes.
   - Hardcoded seasonal themes are preferred over an admin CRUD editor unless a real need appears.
@@ -39,23 +30,7 @@ This is the active backlog. `docs/PRD.md` is now mostly a product reference for 
 - [ ] Make v2 the only UI.
   - Remove the old `public` UI and the `WOOD_UI` split once v2 is fully settled.
 
-- [ ] Add a private Account screen.
-  - Keep private controls separate from public profile identity.
-  - Include username, member since, birthday settings, notification/device state, global notification snooze, muted friends, bug report entry point, and logout.
-  - Add global notification snooze options such as 1 hour, 8 hours, until tomorrow, and until turned back on.
-  - Let users remove the current device's push subscription.
-
-- [ ] Add public friend-visible profile pages.
-  - Friends should be able to view public profile details for each other.
-  - Include public info such as username, member since, chosen favourite wood, visible birthday/birthday state, shared Wood stats, and achievements.
-  - Let users view other people's achievements from their profile.
-  - Keep profiles friend-only; no public browse or global directory.
-
-- [ ] Let users choose their favourite wood.
-  - Treat this as a small profile joke, not a productivity preference.
-  - Show it on their public profile.
-  - Consider options like oak, pine, balsa, driftwood, plywood, enchanted plywood, or "whatever this app is made of."
-  - Add an achievement for choosing a favourite wood for the first time.
+- [ ] Add an achievement for choosing a favourite wood for the first time.
 
 - [ ] Add a Wood Triangle achievement.
   - Unlock when three users form a favourite-friend triangle: A favourites B, B favourites C, and C favourites A.
