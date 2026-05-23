@@ -126,6 +126,22 @@ export const ACHIEVEMENTS = [
     criteria_value: "seasonal_spirit",
   },
   {
+    slug: "birthday-wood",
+    name: "Birthday Wood",
+    description: "Send a Birthday Wood",
+    icon: "bday",
+    criteria_type: "special",
+    criteria_value: "birthday_wood",
+  },
+  {
+    slug: "happy-birthday-to-me",
+    name: "Happy Birthday to Me",
+    description: "Receive a Birthday Wood",
+    icon: "cake",
+    criteria_type: "special",
+    criteria_value: "birthday_received",
+  },
+  {
     slug: "all-the-seasons",
     name: "All the Seasons",
     description: "Send a Wood in every seasonal event",
@@ -247,6 +263,12 @@ export function evaluateAchievements(db, userId, context = {}) {
   }
   if (sent.some((wood) => wood.type === "seasonal")) {
     slugs.add("seasonal-spirit");
+  }
+  if (sent.some((wood) => wood.type === "birthday")) {
+    slugs.add("birthday-wood");
+  }
+  if ((db.woods || []).some((wood) => wood.recipient_id === userId && wood.type === "birthday")) {
+    slugs.add("happy-birthday-to-me");
   }
   if (hasAllSeasonalWoods(db, sent)) {
     slugs.add("all-the-seasons");

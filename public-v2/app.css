@@ -935,6 +935,19 @@ html, body {
   box-shadow: none;
 }
 
+.wood-key.birthday-key {
+  min-height: 78px;
+  margin-bottom: 10px;
+  background: #f1c45c;
+  color: #211506;
+  box-shadow: 0 14px 34px rgba(241, 196, 92, 0.16);
+}
+
+.wood-key.birthday-key span {
+  font-size: 26px;
+  letter-spacing: 0.03em;
+}
+
 .wood-key span {
   font-size: 54px;
   line-height: 1;
@@ -1328,6 +1341,12 @@ html, body {
   color: #ff8f8f;
   border-color: rgba(217, 64, 64, 0.36);
   background: var(--danger-dim);
+}
+
+.profile-action.birthday {
+  color: #f1c45c;
+  border-color: rgba(241, 196, 92, 0.34);
+  background: rgba(241, 196, 92, 0.1);
 }
 
 .profile-stat-grid {

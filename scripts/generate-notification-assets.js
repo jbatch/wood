@@ -2,7 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import zlib from "node:zlib";
 
-const outDir = path.join(process.cwd(), "public", "notifications");
+const outDirs = [
+  path.join(process.cwd(), "public", "notifications"),
+  path.join(process.cwd(), "public-v2", "notifications"),
+];
 const size = 512;
 
 const assets = [
@@ -11,14 +14,17 @@ const assets = [
   ["wood-alert.png", drawAlert],
   ["wood-long.png", drawLong],
   ["wood-summon.png", drawSummon],
+  ["wood-birthday.png", drawBirthday],
   ["wood-badge.png", drawBadge, 96],
 ];
 
-await fs.mkdir(outDir, { recursive: true });
-for (const [filename, draw, assetSize = size] of assets) {
-  const canvas = createCanvas(assetSize, assetSize);
-  draw(canvas);
-  await fs.writeFile(path.join(outDir, filename), encodePng(canvas));
+for (const outDir of outDirs) {
+  await fs.mkdir(outDir, { recursive: true });
+  for (const [filename, draw, assetSize = size] of assets) {
+    const canvas = createCanvas(assetSize, assetSize);
+    draw(canvas);
+    await fs.writeFile(path.join(outDir, filename), encodePng(canvas));
+  }
 }
 
 function drawClassic(canvas) {
@@ -78,6 +84,21 @@ function drawSummon(canvas) {
   log(canvas, 146, 214, 220, 94, "#a76532");
   cutEnd(canvas, 154, 261, 54);
   cutEnd(canvas, 360, 261, 54);
+}
+
+function drawBirthday(canvas) {
+  background(canvas, "#2c2514");
+  circle(canvas, 256, 256, 204, "#f1c45c");
+  circle(canvas, 256, 256, 164, "#fff4c7");
+  log(canvas, 126, 248, 260, 92, "#9d622f");
+  cutEnd(canvas, 134, 294, 52);
+  cutEnd(canvas, 380, 294, 52);
+  roundedRect(canvas, 180, 162, 152, 54, 18, "#315f3a");
+  line(canvas, 194, 188, 318, 188, "#d9e8c2", 7);
+  line(canvas, 212, 162, 212, 126, "#315f3a", 10);
+  line(canvas, 300, 162, 300, 126, "#315f3a", 10);
+  circle(canvas, 212, 116, 16, "#ffcf67");
+  circle(canvas, 300, 116, 16, "#ffcf67");
 }
 
 function drawBadge(canvas) {

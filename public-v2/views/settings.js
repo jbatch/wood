@@ -138,8 +138,12 @@ async function removeDevice(ctx) {
   try {
     const reg = await navigator.serviceWorker?.ready;
     const sub = reg ? await reg.pushManager.getSubscription() : null;
+    const endpoint = sub?.endpoint || "";
     if (sub) await sub.unsubscribe();
-    await api("/api/push-subscriptions", { method: "DELETE" });
+    await api("/api/push-subscriptions", {
+      method: "DELETE",
+      body: endpoint ? { endpoint } : {},
+    });
     await refreshPushStatus();
     state.settingsError = "";
     render();

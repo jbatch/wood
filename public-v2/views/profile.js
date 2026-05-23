@@ -73,6 +73,9 @@ export function renderProfile(ctx) {
   document.querySelector("[data-profile-action='mute']")?.addEventListener("click", async (event) => {
     await friendAction(ctx, event.currentTarget.dataset.nextAction);
   });
+  document.querySelector("[data-profile-action='birthday']")?.addEventListener("click", async () => {
+    await sendBirthdayWood(ctx);
+  });
   document.querySelector("[data-profile-action='remove']")?.addEventListener("click", () => {
     document.querySelector("#remove-sheet")?.classList.add("visible");
   });
@@ -164,6 +167,7 @@ function friendProfile(data) {
     </section>
     <section class="profile-actions">
       <button class="profile-action" data-profile-action="history">History</button>
+      ${data.friendship?.wood?.birthdayAvailable ? `<button class="profile-action birthday" data-profile-action="birthday">Birthday Wood</button>` : ""}
       <button class="profile-action" data-profile-action="mute" data-next-action="${muted ? "unmute" : "mute"}">${muted ? "Unmute" : "Mute"}</button>
       <button class="profile-action danger" data-profile-action="remove">Remove</button>
     </section>
@@ -265,6 +269,22 @@ async function friendAction(ctx, action, { backHome = false } = {}) {
     } else {
       state.profileData = await api(`/api/profiles/${state.profileUserId}`);
     }
+    render();
+  } catch (err) {
+    state.profileError = humanErr(err.message);
+    render();
+  }
+}
+
+async function sendBirthdayWood(ctx) {
+  const { api, render } = ctx;
+  try {
+    state.data = await api(`/api/friends/${state.profileUserId}/wood`, {
+      method: "POST",
+      body: { birthday: true },
+    });
+    state.profileData = await api(`/api/profiles/${state.profileUserId}`);
+    state.profileError = "";
     render();
   } catch (err) {
     state.profileError = humanErr(err.message);

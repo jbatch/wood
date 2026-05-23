@@ -69,6 +69,7 @@ export function renderHistory(ctx) {
     btn.addEventListener("click", () => openWoodKeyboard(ctx));
   });
   document.querySelector("#wood-key")?.addEventListener("click", () => sendHistoryWood(ctx));
+  document.querySelector("#birthday-key")?.addEventListener("click", () => sendHistoryWood(ctx, { birthday: true }));
   document.querySelector("#history-messages")?.addEventListener("click", () => {
     if (state.woodKeyboardOpen) {
       state.woodKeyboardOpen = false;
@@ -98,6 +99,12 @@ function historyComposerHtml(friend) {
       </div>
       ${state.woodKeyboardOpen ? `
         <div class="wood-keyboard">
+          ${friend?.wood?.birthdayAvailable ? `
+            <button class="wood-key birthday-key" id="birthday-key" type="button">
+              <span>HB</span>
+              <small>Birthday Wood</small>
+            </button>
+          ` : ""}
           <button class="wood-key ${cooldown ? "cooldown" : ""}" id="wood-key" type="button">
             <span>🪵</span>
             <small>${escHtml(keyHint)}</small>
@@ -114,7 +121,7 @@ function openWoodKeyboard(ctx) {
   renderHistory(ctx);
 }
 
-async function sendHistoryWood(ctx) {
+async function sendHistoryWood(ctx, options = {}) {
   const { api, showToast } = ctx;
   const friendId = state.historyFriendId;
   const friend = currentHistoryFriend();
@@ -125,7 +132,10 @@ async function sendHistoryWood(ctx) {
   }
 
   try {
-    state.data = await api(`/api/friends/${friendId}/wood`, { method: "POST", body: { holdMs: 0 } });
+    state.data = await api(`/api/friends/${friendId}/wood`, {
+      method: "POST",
+      body: options.birthday ? { birthday: true } : { holdMs: 0 },
+    });
     state.historyData = await api(`/api/friends/${friendId}/woods`);
     state.error = "";
     renderHistory(ctx);

@@ -161,7 +161,7 @@ function appManifest() {
 
 async function handleApi(req, res, url) {
   const user = currentUser(req);
-  const body = ["POST", "PUT", "PATCH"].includes(req.method)
+  const body = ["POST", "PUT", "PATCH", "DELETE"].includes(req.method)
     ? await readJson(req)
     : {};
 
@@ -246,7 +246,7 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === "DELETE" && url.pathname === "/api/push-subscriptions") {
-    await deletePushSubscriptions(user);
+    await deletePushSubscriptions(user, body);
     sendNoContent(res);
     return;
   }
@@ -461,10 +461,14 @@ function appState(user) {
       const muted = db.mutes.some(
         (mute) => mute.muter_id === user.id && mute.muted_id === friend.id,
       );
+      const woodState = visibleWoodState(db, user.id, friend.id);
       return {
         ...publicUser(friend),
         muted,
-        wood: visibleWoodState(db, user.id, friend.id),
+        wood: {
+          ...woodState,
+          birthdayAvailable: woodState.canWood && birthdayWoodAvailable(db, user.id, friend.id),
+        },
         streak: visibleStreak(db, user.id, friend.id),
         stats: pairStats(db, user.id, friend.id),
       };
@@ -546,7 +550,12 @@ async function getProfile(user, res, profileUserId) {
       ? null
       : {
           muted,
-          wood: visibleWoodState(store.db, user.id, profileUser.id),
+          wood: {
+            ...visibleWoodState(store.db, user.id, profileUser.id),
+            birthdayAvailable:
+              visibleWoodState(store.db, user.id, profileUser.id).canWood &&
+              birthdayWoodAvailable(store.db, user.id, profileUser.id),
+          },
           streak: visibleStreak(store.db, user.id, profileUser.id),
         },
   });
@@ -922,7 +931,18 @@ async function sendWood(user, res, recipientId, body) {
 
   const seasonal = seasonalTheme(store.db);
   const holdMs = Number(body.holdMs || 0);
-  const variant = woodVariant({ holdMs, seasonal });
+  const wantsBirthday = Boolean(body.birthday);
+  if (wantsBirthday && !birthdayWoodAvailable(store.db, user.id, recipientId)) {
+    sendJson(res, 409, { error: "birthday_wood_unavailable" });
+    return;
+  }
+  const variant = wantsBirthday
+    ? {
+        type: "birthday",
+        label: "Birthday Wood",
+        icon: "/notifications/wood-birthday.png",
+      }
+    : woodVariant({ holdMs, seasonal });
   const muted = store.db.mutes.some(
     (mute) => mute.muter_id === recipientId && mute.muted_id === user.id,
   );
@@ -967,8 +987,13 @@ async function sendWood(user, res, recipientId, body) {
     const notification = woodNotification({
       sender: user.username,
       wood: variant.label,
-      seasonal,
+      seasonal: variant.type === "birthday" ? null : seasonal,
     });
+    if (variant.type === "birthday") {
+      notification.title = "Birthday Wood";
+      notification.body = `${user.username} sent you a Birthday Wood`;
+      notification.icon = variant.icon;
+    }
     const result = await notifyAndPrune(recipientId, {
       title: notification.title,
       body: notification.body,
@@ -1008,6 +1033,11 @@ async function sendWood(user, res, recipientId, body) {
   await evaluateAndNotifyAchievements([user.id], {
     [user.id]: { wood, streakResult, earnedAt: wood.sent_at },
   });
+  if (wood.type === "birthday") {
+    await evaluateAndNotifyAchievements([recipientId], {
+      [recipientId]: { slugs: ["happy-birthday-to-me"], earnedAt: wood.sent_at },
+    });
+  }
   emitUserEvent(recipientId, "wood.received", {
     woodId: wood.id,
     friendId: user.id,
@@ -1432,15 +1462,21 @@ async function handleAdmin(user, req, res, url, body) {
   sendJson(res, 404, { error: "not_found" });
 }
 
-async function deletePushSubscriptions(user) {
+async function deletePushSubscriptions(user, body = {}) {
+  const endpoint = String(body.endpoint || "");
   const deleted = await store.write((db) => {
     const before = db.push_subs.length;
-    db.push_subs = db.push_subs.filter((sub) => sub.user_id !== user.id);
+    db.push_subs = db.push_subs.filter((sub) => {
+      if (sub.user_id !== user.id) return true;
+      if (endpoint) return sub.endpoint !== endpoint;
+      return false;
+    });
     return before - db.push_subs.length;
   });
   debugLog("push.subscription.deleted_for_user", {
     userId: user.id,
     username: user.username,
+    endpointHost: endpoint ? endpointHost(endpoint) : null,
     deleted,
   });
 }
@@ -1626,6 +1662,27 @@ function isBirthdayToday(user, date = new Date()) {
   if (!user?.birthday_month || !user?.birthday_day) return false;
   return date.getMonth() + 1 === Number(user.birthday_month) &&
     date.getDate() === Number(user.birthday_day);
+}
+
+function birthdayWoodAvailable(db, senderId, recipientId, date = new Date()) {
+  const recipient = db.users.find((candidate) => candidate.id === recipientId);
+  if (!recipient || !recipient.birthday_visible || !isBirthdayToday(recipient, date)) {
+    return false;
+  }
+  return !(db.woods || []).some(
+    (wood) =>
+      wood.sender_id === senderId &&
+      wood.recipient_id === recipientId &&
+      wood.type === "birthday" &&
+      sameLocalDay(wood.sent_at, date),
+  );
+}
+
+function sameLocalDay(iso, date) {
+  const left = new Date(iso);
+  return left.getFullYear() === date.getFullYear() &&
+    left.getMonth() === date.getMonth() &&
+    left.getDate() === date.getDate();
 }
 
 function cleanGroupName(value) {

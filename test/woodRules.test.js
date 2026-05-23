@@ -220,6 +220,25 @@ test("achievements cover special reply and long wood rituals", () => {
   assert.ok(slugs.includes("mutual"));
 });
 
+test("achievements cover sending and receiving Birthday Woods", () => {
+  const db = dbWithWoods([
+    {
+      sender_id: "a",
+      recipient_id: "b",
+      sent_at: "2026-05-22T00:00:00.000Z",
+      type: "birthday",
+      label: "Birthday Wood",
+    },
+  ]);
+  ensureAchievementDefinitions(db);
+
+  const senderSlugs = evaluateAchievements(db, "a").map((achievement) => achievement.slug);
+  const recipientSlugs = evaluateAchievements(db, "b").map((achievement) => achievement.slug);
+
+  assert.ok(senderSlugs.includes("birthday-wood"));
+  assert.ok(recipientSlugs.includes("happy-birthday-to-me"));
+});
+
 test("reply achievements are tied to the current Wood", () => {
   const db = dbWithWoods([
     {
