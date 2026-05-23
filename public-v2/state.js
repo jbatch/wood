@@ -7,6 +7,8 @@ export const state = {
   debug: null,
   pollTimer: null,
   polling: false,
+  realtime: null,
+  realtimeRefreshTimer: null,
   view: "home",
   homeTab: "friends",
   adminTab: "overview",

@@ -30,6 +30,7 @@ const ctx = {
   saveHomeTab,
   showToast,
   startPolling,
+  startRealtime,
   subscribePush,
 };
 
@@ -45,6 +46,7 @@ async function init() {
     restoreTabs();
     await loadApp();
     startPolling();
+    startRealtime();
   }
   render();
 }
@@ -95,6 +97,7 @@ async function logout() {
   state.admin = null;
   state.debug = null;
   stopPolling();
+  stopRealtime();
   history.replaceState(null, "", "/");
   render();
 }
@@ -108,6 +111,45 @@ function startPolling() {
 function stopPolling() {
   clearInterval(state.pollTimer);
   state.pollTimer = null;
+}
+
+function startRealtime() {
+  if (state.realtime || !("EventSource" in window)) return;
+  const source = new EventSource("/api/events");
+  state.realtime = source;
+  for (const eventName of [
+    "app.changed",
+    "wood.received",
+    "friend_request.created",
+    "group.invite.created",
+    "group_wood.received",
+    "achievement.unlocked",
+  ]) {
+    source.addEventListener(eventName, scheduleRealtimeRefresh);
+  }
+  source.addEventListener("error", () => {
+    if (source.readyState === EventSource.CLOSED && state.realtime === source) {
+      state.realtime = null;
+    }
+  });
+}
+
+function stopRealtime() {
+  clearTimeout(state.realtimeRefreshTimer);
+  state.realtimeRefreshTimer = null;
+  if (state.realtime) {
+    state.realtime.close();
+    state.realtime = null;
+  }
+}
+
+function scheduleRealtimeRefresh() {
+  if (!state.session?.user || document.visibilityState === "hidden") return;
+  clearTimeout(state.realtimeRefreshTimer);
+  state.realtimeRefreshTimer = setTimeout(() => {
+    state.realtimeRefreshTimer = null;
+    poll();
+  }, 150);
 }
 
 async function poll() {

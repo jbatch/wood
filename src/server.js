@@ -69,6 +69,9 @@ import { debugEntries, debugLog, endpointHost } from "./debugLog.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "..", config.ui === "v2" ? "public-v2" : "public");
 const store = await createStore();
+const realtimeClients = new Map();
+let realtimeEventId = 0;
+const REALTIME_HEARTBEAT_MS = 25000;
 
 const requestListener = async (req, res) => {
   try {
@@ -202,6 +205,11 @@ async function handleApi(req, res, url) {
 
   if (req.method === "GET" && url.pathname === "/api/app") {
     sendJson(res, 200, appState(user));
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/events") {
+    handleRealtimeStream(user, req, res);
     return;
   }
 
@@ -398,6 +406,11 @@ async function signup(req, res, body) {
         inviteId: result.invite.id,
         joinedUserId: result.user.id,
       });
+      emitUserEvent(creator.id, "app.changed", {
+        reason: "invite.used",
+        inviteId: result.invite.id,
+        joinedUserId: result.user.id,
+      });
     }
   }
   sendJson(res, 201, { user: publicUser(result.user) });
@@ -560,7 +573,15 @@ async function createGroup(user, res, body) {
       groupId: group.id,
       invitedUserId: memberId,
     });
+    emitUserEvent(memberId, "group.invite.created", {
+      groupId: group.id,
+      invitedBy: user.id,
+    });
   }
+  emitUserEvent(user.id, "app.changed", {
+    reason: "group.created",
+    groupId: group.id,
+  });
 
   sendJson(res, 201, appState(user));
 }
@@ -594,6 +615,11 @@ async function respondToGroupInvite(user, res, membershipId, action) {
       },
     );
   }
+  emitUsersEvent([user.id, result.membership.invited_by], "app.changed", {
+    reason: `group.invite.${action}`,
+    groupId: result.membership.group_id,
+    memberId: user.id,
+  });
   sendJson(res, 200, appState(user));
 }
 
@@ -640,7 +666,11 @@ async function requestFriend(user, res, body) {
     friendshipId: result.friendship.id,
     requesterId: user.id,
   });
-  sendJson(res, 201, { request: { id: result.friendship.id } });
+  emitUsersEvent([user.id, result.recipient.id], "friend_request.created", {
+    friendshipId: result.friendship.id,
+    requesterId: user.id,
+  });
+  sendJson(res, 201, appState(user));
 }
 
 async function respondToFriendRequest(user, res, friendshipId, action) {
@@ -676,6 +706,14 @@ async function respondToFriendRequest(user, res, friendshipId, action) {
       },
     );
   }
+  emitUsersEvent(
+    [result.friendship.requester_id, result.friendship.addressee_id],
+    "app.changed",
+    {
+      reason: `friend_request.${action}`,
+      friendshipId: result.friendship.id,
+    },
+  );
   sendJson(res, 200, appState(user));
 }
 
@@ -723,6 +761,10 @@ async function handleFriendAction(user, res, friendId, action, body) {
     sendJson(res, 404, { error: result.error });
     return;
   }
+  emitUsersEvent([user.id, friendId], "app.changed", {
+    reason: `friend.${action}`,
+    friendId,
+  });
   sendJson(res, 200, appState(user));
 }
 
@@ -835,6 +877,16 @@ async function sendWood(user, res, recipientId, body) {
   await evaluateAndNotifyAchievements([user.id], {
     [user.id]: { wood, streakResult, earnedAt: wood.sent_at },
   });
+  emitUserEvent(recipientId, "wood.received", {
+    woodId: wood.id,
+    friendId: user.id,
+    type: wood.type,
+  });
+  emitUserEvent(user.id, "app.changed", {
+    reason: "wood.sent",
+    woodId: wood.id,
+    friendId: recipientId,
+  });
   sendJson(res, 201, appState(user));
 }
 
@@ -897,6 +949,11 @@ async function sendGroupWood(user, res, groupId, body) {
       groupId,
       recipientId,
     });
+    emitUserEvent(recipientId, "group_wood.received", {
+      woodId: wood.id,
+      groupId,
+      senderId: user.id,
+    });
   }
 
   debugLog("group_wood.created", {
@@ -907,6 +964,11 @@ async function sendGroupWood(user, res, groupId, body) {
     senderUsername: user.username,
     recipients: recipients.length,
     type: variant.type,
+  });
+  emitUserEvent(user.id, "app.changed", {
+    reason: "group_wood.sent",
+    woodId: wood.id,
+    groupId,
   });
   sendJson(res, 201, appState(user));
 }
@@ -999,6 +1061,9 @@ async function notifyAchievements(userId, achievements) {
       achievement: achievement.slug,
       sent: result.sent,
       disabled: Boolean(result.disabled),
+    });
+    emitUserEvent(userId, "achievement.unlocked", {
+      achievement: achievement.slug,
     });
   }
 }
@@ -1099,9 +1164,11 @@ async function handleAdmin(user, req, res, url, body) {
     /^\/api\/admin\/users\/([^/]+)\/(suspend|unsuspend|promote|demote|delete)$/,
   );
   if (req.method === "POST" && userAction) {
+    let targetId = null;
     await store.write((db) => {
       const target = db.users.find((candidate) => candidate.id === userAction[1]);
       if (!target || target.id === user.id) return;
+      targetId = target.id;
       if (userAction[2] === "suspend") target.suspended = true;
       if (userAction[2] === "unsuspend") target.suspended = false;
       if (userAction[2] === "promote") target.role = "admin";
@@ -1110,6 +1177,10 @@ async function handleAdmin(user, req, res, url, body) {
         target.suspended = true;
         target.deleted_at = nowIso();
       }
+    });
+    emitUsersEvent([user.id, targetId], "app.changed", {
+      reason: `admin.user.${userAction[2]}`,
+      userId: targetId,
     });
     sendJson(res, 200, adminState());
     return;
@@ -1210,6 +1281,9 @@ async function handleAdmin(user, req, res, url, body) {
     await store.write((db) => {
       db.config.cooldown_hours = clamp(Number(body.cooldown_hours || 24), 1, 720);
       db.config.seasonal_enabled = Boolean(body.seasonal_enabled);
+    });
+    emitAllUsersEvent("app.changed", {
+      reason: "admin.config.updated",
     });
     sendJson(res, 200, adminState());
     return;
@@ -1339,4 +1413,77 @@ function cleanGroupName(value) {
 function clamp(value, min, max) {
   if (!Number.isFinite(value)) return min;
   return Math.max(min, Math.min(max, value));
+}
+
+function handleRealtimeStream(user, req, res) {
+  req.socket.setTimeout(0);
+  res.writeHead(200, {
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-store, no-transform",
+    connection: "keep-alive",
+    "x-accel-buffering": "no",
+  });
+  res.write("retry: 5000\n\n");
+  res.write(`: connected ${new Date().toISOString()}\n\n`);
+
+  const client = {
+    id: id("realtime"),
+    res,
+    heartbeat: setInterval(() => {
+      res.write(`: heartbeat ${new Date().toISOString()}\n\n`);
+    }, REALTIME_HEARTBEAT_MS),
+  };
+  let clients = realtimeClients.get(user.id);
+  if (!clients) {
+    clients = new Set();
+    realtimeClients.set(user.id, clients);
+  }
+  clients.add(client);
+  debugLog("realtime.connected", {
+    userId: user.id,
+    username: user.username,
+    clients: clients.size,
+  });
+
+  req.on("close", () => {
+    clearInterval(client.heartbeat);
+    clients.delete(client);
+    if (!clients.size) realtimeClients.delete(user.id);
+    debugLog("realtime.disconnected", {
+      userId: user.id,
+      username: user.username,
+      clients: clients.size,
+    });
+  });
+}
+
+function emitUsersEvent(userIds, event, payload = {}) {
+  for (const userId of new Set(userIds.filter(Boolean))) {
+    emitUserEvent(userId, event, payload);
+  }
+}
+
+function emitAllUsersEvent(event, payload = {}) {
+  for (const user of store.db.users) {
+    emitUserEvent(user.id, event, payload);
+  }
+}
+
+function emitUserEvent(userId, event, payload = {}) {
+  const clients = realtimeClients.get(userId);
+  if (!clients?.size) return;
+  const message = formatSseEvent(event, payload);
+  for (const client of clients) {
+    client.res.write(message);
+  }
+}
+
+function formatSseEvent(event, payload) {
+  realtimeEventId += 1;
+  const eventName = String(event || "app.changed").replace(/[^a-z0-9_.-]/gi, "");
+  const data = JSON.stringify({
+    ...payload,
+    at: nowIso(),
+  });
+  return `id: ${realtimeEventId}\nevent: ${eventName}\ndata: ${data}\n\n`;
 }

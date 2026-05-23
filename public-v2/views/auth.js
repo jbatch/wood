@@ -2,7 +2,7 @@ import { state } from "../state.js";
 import { escHtml, humanErr } from "../utils.js";
 
 export function renderAuth(ctx) {
-  const { app, api, loadApp, render, startPolling } = ctx;
+  const { app, api, loadApp, render, startPolling, startRealtime } = ctx;
   const params = new URLSearchParams(location.search);
   const invite = params.get("invite") || "";
 
@@ -46,6 +46,7 @@ export function renderAuth(ctx) {
       history.replaceState(null, "", "/");
       await loadApp();
       startPolling();
+      startRealtime();
       render();
     } catch (err) {
       document.querySelector("#auth-error").textContent = humanErr(err.message);
