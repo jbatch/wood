@@ -2,6 +2,8 @@
 
 > A private, invite-only PWA where you send friends a single tap notification called a "Wood". Nothing more.
 
+Status: the basic core implementation is complete as of `0.2.0`. This document remains a reference for the product purpose, tone, and core model. Active outstanding work now lives in [`TODO.md`](../TODO.md).
+
 ---
 
 ## 1. Concept
@@ -51,7 +53,7 @@ Admins are assigned manually (DB flag). There is no self-serve role escalation.
 
 ### Login Options
 - **Username + password** (bcrypt hashed, standard)
-- **Passwordless / magic link** — enter email, receive a one-time login link (v1 can skip this and just do username/password to keep it simple)
+- Forgotten-password handling is intentionally unresolved for now; see `TODO.md`.
 
 ### Sessions
 - JWT or server-side sessions (keep it simple)
@@ -80,12 +82,11 @@ Admins are assigned manually (DB flag). There is no self-serve role escalation.
 - **Pending** — request sent, awaiting response
 - **Friends** — accepted
 - **Rejected** — declined (silent to sender, request disappears)
-- **Blocked** — blocks all interaction; blocked user sees the other as non-existent
+- **Blocked** — supported in the backend, but no v2 UI is planned unless a real need appears
 
 ### Actions on a Friend
 - **Wood** — send a Wood (subject to cooldown)
 - **Mute** — suppress their incoming Woods (no notification, Wood still registers)
-- **Block** — nuclear option, removes friendship, prevents re-adding
 - **Remove friend** — ends the friendship without blocking
 
 ---
@@ -125,7 +126,7 @@ Admins are assigned manually (DB flag). There is no self-serve role escalation.
   - Halloween: "🎃 [User] sent you a Spooky Wood"
   - New Year: "🎆 [User] sent you a New Year Wood"
   - User's birthday (if set): special birthday Wood variant
-- Seasonal logic lives server-side so it can be updated without app changes
+- Seasonal logic should be code-owned rather than fully dynamic, so events can include app decorations, swapped images, special notification copy, and UI flourishes.
 
 ---
 
@@ -135,10 +136,9 @@ Accessible only to `admin` role users. Separate route (e.g. `/admin`).
 
 ### User Management
 - List all users (username, email, join date, last active, role, status)
-- View a user's friend list and Wood history
 - Suspend / unsuspend a user
-- Delete a user
 - Promote to admin / demote from admin
+- Admin user detail and delete UI are intentionally not planned unless a need appears.
 
 ### Invite Management
 - Generate invite links (single or bulk)
@@ -149,14 +149,14 @@ Accessible only to `admin` role users. Separate route (e.g. `/admin`).
 ### System Config
 - Adjust global Wood cooldown timeout
 - Toggle seasonal Wood themes on/off
-- Add/edit seasonal dates and notification text
+- Seasonal events should generally be code-owned; avoid turning them into generic admin-managed content.
 
-### Stats (nice to have)
+### Stats
 - Total users, total Woods sent, most active pairs, Woods sent today
 
 ---
 
-## 10. Future: Wood Groups (v2)
+## 10. Wood Groups
 
 - A group has a name and 2+ members
 - Sending a Wood to a group notifies all members simultaneously
@@ -201,6 +201,7 @@ A streak tracks how many consecutive days two friends have exchanged at least on
 - The streak breaks if 48 hours pass without a mutual exchange
 - A streak of 0 is just "no streak" — not displayed
 - Streaks are **per pair**, not global
+- The streak system needs a future clarity pass; see `TODO.md`.
 
 ### Display
 - Shown on each friend's card: "🔥 12" next to their name when active
@@ -238,10 +239,7 @@ Tapping a friend's card shows a mini stats panel for that pair:
 - First Wood ever exchanged (date)
 - Last Wood exchanged
 
-### Leaderboard (optional v1 feature)
-- Among your friends only (not global)
-- Ranked by: most Woods sent this week, longest current streak
-- Opt-out available (hide yourself from friends' leaderboards)
+Leaderboards are not planned unless they can preserve Wood's small, private joke. Avoid broad competitive social mechanics.
 
 ---
 
@@ -327,5 +325,6 @@ achievements_earned id, user_id, achievement_id, earned_at
 
 ## Changelog
 
+- 2026-05-23 — Marked core implementation complete for `0.2.0`; moved active backlog to `TODO.md`
 - 2026-05-22 — Initial PRD created
 - 2026-05-22 — Added streaks (§13), stats (§14), achievements (§15), updated data model (§16)
