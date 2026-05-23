@@ -72,6 +72,11 @@ function migrate(sqlite) {
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'user',
       suspended INTEGER NOT NULL DEFAULT 0,
+      favourite_wood TEXT NOT NULL DEFAULT 'oak',
+      birthday_month INTEGER,
+      birthday_day INTEGER,
+      birthday_visible INTEGER NOT NULL DEFAULT 0,
+      notification_snoozed_until TEXT,
       created_at TEXT NOT NULL,
       last_active_at TEXT,
       deleted_at TEXT
@@ -223,6 +228,11 @@ function migrate(sqlite) {
   `);
 
   ensureColumn(sqlite, "users", "deleted_at", "TEXT");
+  ensureColumn(sqlite, "users", "favourite_wood", "TEXT NOT NULL DEFAULT 'oak'");
+  ensureColumn(sqlite, "users", "birthday_month", "INTEGER");
+  ensureColumn(sqlite, "users", "birthday_day", "INTEGER");
+  ensureColumn(sqlite, "users", "birthday_visible", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(sqlite, "users", "notification_snoozed_until", "TEXT");
   ensureColumn(sqlite, "invites", "reusable", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(sqlite, "woods", "hold_duration_ms", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(sqlite, "woods", "streak_count_after", "INTEGER");
@@ -255,6 +265,11 @@ async function seedFirstAdmin(store) {
       password_hash: await hashPassword("wood-admin"),
       role: "admin",
       suspended: false,
+      favourite_wood: "oak",
+      birthday_month: null,
+      birthday_day: null,
+      birthday_visible: false,
+      notification_snoozed_until: null,
       created_at: nowIso(),
       last_active_at: null,
       deleted_at: null,
@@ -298,6 +313,11 @@ function normalizeDb(db) {
     users: (db.users || []).map((user) => ({
       ...user,
       suspended: Boolean(user.suspended),
+      favourite_wood: user.favourite_wood || "oak",
+      birthday_month: user.birthday_month ?? null,
+      birthday_day: user.birthday_day ?? null,
+      birthday_visible: Boolean(user.birthday_visible),
+      notification_snoozed_until: user.notification_snoozed_until || null,
       deleted_at: user.deleted_at || null,
     })),
     push_subs: db.push_subs || [],
@@ -363,14 +383,24 @@ function persistSnapshot(sqlite, db) {
 
     const insertUser = sqlite.prepare(`
       INSERT INTO users
-        (id, username, email, password_hash, role, suspended, created_at, last_active_at, deleted_at)
+        (
+          id, username, email, password_hash, role, suspended, favourite_wood,
+          birthday_month, birthday_day, birthday_visible, notification_snoozed_until,
+          created_at, last_active_at, deleted_at
+        )
       VALUES
-        (@id, @username, @email, @password_hash, @role, @suspended, @created_at, @last_active_at, @deleted_at)
+        (
+          @id, @username, @email, @password_hash, @role, @suspended, @favourite_wood,
+          @birthday_month, @birthday_day, @birthday_visible, @notification_snoozed_until,
+          @created_at, @last_active_at, @deleted_at
+        )
     `);
     for (const user of snapshot.users) {
       insertUser.run({
         ...user,
         suspended: user.suspended ? 1 : 0,
+        birthday_visible: user.birthday_visible ? 1 : 0,
+        notification_snoozed_until: user.notification_snoozed_until || null,
         deleted_at: user.deleted_at || null,
       });
     }

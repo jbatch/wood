@@ -72,6 +72,16 @@ const store = await createStore();
 const realtimeClients = new Map();
 let realtimeEventId = 0;
 const REALTIME_HEARTBEAT_MS = 25000;
+const FAVOURITE_WOODS = [
+  "oak",
+  "pine",
+  "balsa",
+  "driftwood",
+  "plywood",
+  "enchanted plywood",
+  "whatever this app is made of",
+];
+const FOREVER_SNOOZE_UNTIL = "9999-12-31T23:59:59.000Z";
 
 const requestListener = async (req, res) => {
   try {
@@ -208,6 +218,22 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (req.method === "PATCH" && url.pathname === "/api/profile") {
+    await updateProfile(user, res, body);
+    return;
+  }
+
+  if (req.method === "PATCH" && url.pathname === "/api/settings") {
+    await updateSettings(user, res, body);
+    return;
+  }
+
+  const profileView = url.pathname.match(/^\/api\/profiles\/([^/]+)$/);
+  if (req.method === "GET" && profileView) {
+    await getProfile(user, res, profileView[1]);
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/events") {
     handleRealtimeStream(user, req, res);
     return;
@@ -317,7 +343,11 @@ function currentUser(req) {
   const cookies = parseCookies(req.headers.cookie || "");
   const session = verifySession(cookies[SESSION_COOKIE]);
   if (!session) return null;
-  return store.db.users.find((user) => user.id === session.userId) || null;
+  return currentUserFromId(session.userId);
+}
+
+function currentUserFromId(userId) {
+  return store.db.users.find((user) => user.id === userId) || null;
 }
 
 async function login(req, res, body) {
@@ -379,6 +409,11 @@ async function signup(req, res, body) {
       password_hash: await hashPassword(password),
       role: "user",
       suspended: false,
+      favourite_wood: "oak",
+      birthday_month: null,
+      birthday_day: null,
+      birthday_visible: false,
+      notification_snoozed_until: null,
       created_at: nowIso(),
       last_active_at: nowIso(),
     };
@@ -438,6 +473,8 @@ function appState(user) {
 
   return {
     user: publicUser(user),
+    profile: editableProfile(user),
+    settings: privateSettings(db, user.id),
     stats: userStats(db, user.id),
     achievements: achievementProgress(db, user.id),
     friends,
@@ -479,6 +516,100 @@ function appState(user) {
     },
     push: pushPublicConfig(),
   };
+}
+
+async function getProfile(user, res, profileUserId) {
+  const profileUser = store.db.users.find((candidate) => candidate.id === profileUserId);
+  if (!profileUser || profileUser.suspended || profileUser.deleted_at) {
+    sendJson(res, 404, { error: "not_found" });
+    return;
+  }
+
+  const isSelf = profileUser.id === user.id;
+  const friendship = isSelf ? null : findFriendship(store.db, user.id, profileUser.id);
+  if (!isSelf && (!friendship || friendship.status !== "accepted")) {
+    sendJson(res, 404, { error: "not_found" });
+    return;
+  }
+
+  const muted = !isSelf && store.db.mutes.some(
+    (mute) => mute.muter_id === user.id && mute.muted_id === profileUser.id,
+  );
+
+  sendJson(res, 200, {
+    profile: publicProfile(profileUser, { includePrivate: isSelf }),
+    isSelf,
+    favouriteWoodOptions: FAVOURITE_WOODS,
+    stats: isSelf ? userStats(store.db, user.id) : pairStats(store.db, user.id, profileUser.id),
+    achievements: achievementProgress(store.db, profileUser.id),
+    friendship: isSelf
+      ? null
+      : {
+          muted,
+          wood: visibleWoodState(store.db, user.id, profileUser.id),
+          streak: visibleStreak(store.db, user.id, profileUser.id),
+        },
+  });
+}
+
+async function updateProfile(user, res, body) {
+  const username =
+    Object.hasOwn(body, "username") ? cleanUsername(body.username) : user.username;
+  const favouriteWood =
+    Object.hasOwn(body, "favouriteWood")
+      ? cleanFavouriteWood(body.favouriteWood)
+      : user.favourite_wood || "oak";
+  const birthday = cleanBirthday(body);
+  const birthdayVisible = Boolean(body.birthdayVisible);
+
+  if (!/^[a-z0-9_]{3,24}$/.test(username)) {
+    sendJson(res, 400, { error: "invalid_username" });
+    return;
+  }
+  if (!favouriteWood) {
+    sendJson(res, 400, { error: "invalid_favourite_wood" });
+    return;
+  }
+  if (birthday.error) {
+    sendJson(res, 400, { error: birthday.error });
+    return;
+  }
+
+  const result = await store.write((db) => {
+    if (db.users.some((candidate) => candidate.id !== user.id && candidate.username === username)) {
+      return { error: "username_taken" };
+    }
+    const fresh = db.users.find((candidate) => candidate.id === user.id);
+    if (!fresh) return { error: "not_found" };
+    fresh.username = username;
+    fresh.favourite_wood = favouriteWood;
+    fresh.birthday_month = birthday.month;
+    fresh.birthday_day = birthday.day;
+    fresh.birthday_visible = birthdayVisible && Boolean(birthday.month && birthday.day);
+    return { ok: true };
+  });
+
+  if (result.error) {
+    sendJson(res, result.error === "not_found" ? 404 : 400, { error: result.error });
+    return;
+  }
+  emitUserEvent(user.id, "app.changed", { reason: "profile.updated" });
+  sendJson(res, 200, appState(currentUserFromId(user.id)));
+}
+
+async function updateSettings(user, res, body) {
+  const snoozedUntil = cleanSnooze(body.notificationSnooze);
+  if (snoozedUntil === undefined) {
+    sendJson(res, 400, { error: "invalid_snooze" });
+    return;
+  }
+
+  await store.write((db) => {
+    const fresh = db.users.find((candidate) => candidate.id === user.id);
+    if (fresh) fresh.notification_snoozed_until = snoozedUntil;
+  });
+  emitUserEvent(user.id, "app.changed", { reason: "settings.updated" });
+  sendJson(res, 200, appState(currentUserFromId(user.id)));
 }
 
 async function savePushSubscription(user, body) {
@@ -1069,6 +1200,15 @@ async function notifyAchievements(userId, achievements) {
 }
 
 async function notifyAndPrune(recipientId, payload, context = {}) {
+  const recipient = store.db.users.find((candidate) => candidate.id === recipientId);
+  if (isSnoozed(recipient)) {
+    debugLog("push.skipped_snoozed", {
+      ...context,
+      recipientId,
+      snoozedUntil: recipient.notification_snoozed_until,
+    });
+    return { attempted: 0, sent: 0, disabled: false, stale: [], snoozed: true };
+  }
   const result = await notifyUser(store.db, recipientId, payload);
   if (result.stale.length) {
     await store.write((db) => {
@@ -1400,8 +1540,92 @@ function publicUser(user) {
   };
 }
 
+function editableProfile(user) {
+  return {
+    ...publicProfile(user, { includePrivate: true }),
+    favouriteWoodOptions: FAVOURITE_WOODS,
+  };
+}
+
+function publicProfile(user, { includePrivate = false } = {}) {
+  const hasBirthday = Boolean(user.birthday_month && user.birthday_day);
+  const showBirthday = includePrivate || Boolean(user.birthday_visible);
+  return {
+    id: user.id,
+    username: user.username,
+    memberSince: user.created_at,
+    favouriteWood: cleanFavouriteWood(user.favourite_wood) || "oak",
+    birthdayMonth: showBirthday ? user.birthday_month || null : null,
+    birthdayDay: showBirthday ? user.birthday_day || null : null,
+    birthdayVisible: Boolean(user.birthday_visible),
+    hasBirthday: includePrivate ? hasBirthday : showBirthday && hasBirthday,
+    isBirthdayToday: showBirthday && isBirthdayToday(user),
+  };
+}
+
+function privateSettings(db, userId) {
+  const user = db.users.find((candidate) => candidate.id === userId);
+  return {
+    notificationSnoozedUntil: user?.notification_snoozed_until || null,
+    mutedFriends: (db.mutes || [])
+      .filter((mute) => mute.muter_id === userId)
+      .map((mute) => publicUser(db.users.find((candidate) => candidate.id === mute.muted_id)))
+      .filter(Boolean)
+      .sort((a, b) => a.username.localeCompare(b.username)),
+  };
+}
+
 function cleanUsername(value) {
   return String(value || "").trim().toLowerCase();
+}
+
+function cleanFavouriteWood(value) {
+  const clean = String(value || "").trim().toLowerCase();
+  return FAVOURITE_WOODS.includes(clean) ? clean : "";
+}
+
+function cleanBirthday(body) {
+  const monthRaw = body.birthdayMonth;
+  const dayRaw = body.birthdayDay;
+  if (
+    (monthRaw === null || monthRaw === undefined || monthRaw === "") &&
+    (dayRaw === null || dayRaw === undefined || dayRaw === "")
+  ) {
+    return { month: null, day: null };
+  }
+  const month = Number(monthRaw);
+  const day = Number(dayRaw);
+  if (!Number.isInteger(month) || !Number.isInteger(day)) return { error: "invalid_birthday" };
+  if (month < 1 || month > 12) return { error: "invalid_birthday" };
+  const maxDay = new Date(2024, month, 0).getDate();
+  if (day < 1 || day > maxDay) return { error: "invalid_birthday" };
+  return { month, day };
+}
+
+function cleanSnooze(value) {
+  const now = Date.now();
+  if (value === "off" || value === null || value === false || value === "") return null;
+  if (value === "1h") return new Date(now + 60 * 60 * 1000).toISOString();
+  if (value === "8h") return new Date(now + 8 * 60 * 60 * 1000).toISOString();
+  if (value === "tomorrow") {
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(9, 0, 0, 0);
+    return tomorrow.toISOString();
+  }
+  if (value === "forever") return FOREVER_SNOOZE_UNTIL;
+  return undefined;
+}
+
+function isSnoozed(user) {
+  if (!user?.notification_snoozed_until) return false;
+  return Date.parse(user.notification_snoozed_until) > Date.now();
+}
+
+function isBirthdayToday(user, date = new Date()) {
+  if (!user?.birthday_month || !user?.birthday_day) return false;
+  return date.getMonth() + 1 === Number(user.birthday_month) &&
+    date.getDate() === Number(user.birthday_day);
 }
 
 function cleanGroupName(value) {
