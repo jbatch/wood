@@ -95,6 +95,7 @@ function migrate(sqlite) {
       expires_at TEXT NOT NULL,
       used_by TEXT,
       used_at TEXT,
+      reusable INTEGER NOT NULL DEFAULT 0,
       revoked_at TEXT,
       created_at TEXT NOT NULL,
       FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
@@ -222,6 +223,7 @@ function migrate(sqlite) {
   `);
 
   ensureColumn(sqlite, "users", "deleted_at", "TEXT");
+  ensureColumn(sqlite, "invites", "reusable", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(sqlite, "woods", "hold_duration_ms", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(sqlite, "woods", "streak_count_after", "INTEGER");
   ensureColumn(sqlite, "woods", "streak_incremented", "INTEGER NOT NULL DEFAULT 0");
@@ -265,6 +267,7 @@ async function seedFirstAdmin(store) {
       expires_at: addDaysIso(7),
       used_by: null,
       used_at: null,
+      reusable: false,
       revoked_at: null,
       created_at: nowIso(),
     });
@@ -298,7 +301,10 @@ function normalizeDb(db) {
       deleted_at: user.deleted_at || null,
     })),
     push_subs: db.push_subs || [],
-    invites: db.invites || [],
+    invites: (db.invites || []).map((invite) => ({
+      ...invite,
+      reusable: Boolean(invite.reusable),
+    })),
     friendships: db.friendships || [],
     woods: (db.woods || []).map((wood) => ({
       ...wood,
@@ -371,11 +377,16 @@ function persistSnapshot(sqlite, db) {
 
     const insertInvite = sqlite.prepare(`
       INSERT INTO invites
-        (id, code, created_by, expires_at, used_by, used_at, revoked_at, created_at)
+        (id, code, created_by, expires_at, used_by, used_at, reusable, revoked_at, created_at)
       VALUES
-        (@id, @code, @created_by, @expires_at, @used_by, @used_at, @revoked_at, @created_at)
+        (@id, @code, @created_by, @expires_at, @used_by, @used_at, @reusable, @revoked_at, @created_at)
     `);
-    for (const invite of snapshot.invites) insertInvite.run(invite);
+    for (const invite of snapshot.invites) {
+      insertInvite.run({
+        ...invite,
+        reusable: invite.reusable ? 1 : 0,
+      });
+    }
 
     const insertPushSub = sqlite.prepare(`
       INSERT INTO push_subs

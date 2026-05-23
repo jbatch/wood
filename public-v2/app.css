@@ -1443,6 +1443,11 @@ html, body {
   accent-color: var(--accent);
 }
 
+.compact-toggle {
+  padding: 10px 0 0;
+  border-top: 1px solid var(--border);
+}
+
 .invite-card,
 .user-card,
 .notification-card {
@@ -1460,6 +1465,11 @@ html, body {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.invite-actions {
+  flex-shrink: 0;
+  justify-content: flex-end;
 }
 
 .achievement-award {

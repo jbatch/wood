@@ -93,6 +93,20 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (url.pathname === "/manifest.webmanifest") {
+    sendJson(res, 200, appManifest(), {
+      "content-type": "application/manifest+json; charset=utf-8",
+      "cache-control": "no-store",
+    });
+    return;
+  }
+
+  if (url.pathname === "/apple-touch-icon.svg") {
+    const iconPath = config.dev ? "/icon-dev.svg" : "/icon.svg";
+    await serveStatic({ ...req, url: iconPath }, res, publicDir);
+    return;
+  }
+
   const didServe = await serveStatic(req, res, publicDir);
   if (didServe) return;
 
@@ -101,6 +115,27 @@ async function handleRequest(req, res) {
     res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
     res.end("Not found");
   }
+}
+
+function appManifest() {
+  const isDev = config.dev;
+  return {
+    id: isDev ? "/wood-dev" : "/wood",
+    name: isDev ? "Wood Dev" : "Wood",
+    short_name: isDev ? "Wood Dev" : "Wood",
+    start_url: isDev ? "/?app=dev" : "/",
+    display: "standalone",
+    background_color: isDev ? "#fff7d1" : "#f4f0e8",
+    theme_color: isDev ? "#7a4b00" : "#25382b",
+    icons: [
+      {
+        src: isDev ? "/icon-dev.svg" : "/icon.svg",
+        sizes: "any",
+        type: "image/svg+xml",
+        purpose: "any maskable",
+      },
+    ],
+  };
 }
 
 async function handleApi(req, res, url) {
@@ -132,7 +167,7 @@ async function handleApi(req, res, url) {
     const code = url.pathname.split("/").at(-1);
     const invite = store.db.invites.find((item) => item.code === code);
     sendJson(res, 200, {
-      valid: Boolean(invite && !invite.used_at && !invite.revoked_at && !isPast(invite.expires_at)),
+      valid: isInviteUsable(invite),
     });
     return;
   }
@@ -311,7 +346,7 @@ async function signup(req, res, body) {
 
   const result = await store.write(async (db) => {
     const invite = db.invites.find((item) => item.code === code);
-    if (!invite || invite.used_at || invite.revoked_at || isPast(invite.expires_at)) {
+    if (!isInviteUsable(invite)) {
       return { error: "invalid_invite" };
     }
     if (db.users.some((user) => user.username === username)) {
@@ -332,8 +367,10 @@ async function signup(req, res, body) {
       last_active_at: nowIso(),
     };
     db.users.push(user);
-    invite.used_by = user.id;
-    invite.used_at = nowIso();
+    if (!invite.reusable) {
+      invite.used_by = user.id;
+      invite.used_at = nowIso();
+    }
     return { user };
   });
 
@@ -963,6 +1000,7 @@ async function handleAdmin(user, req, res, url, body) {
   if (req.method === "POST" && url.pathname === "/api/admin/invites") {
     const count = clamp(Number(body.count || 1), 1, 50);
     const days = clamp(Number(body.days || 7), 1, 90);
+    const reusable = Boolean(body.reusable);
     const invites = await store.write((db) => {
       const created = [];
       for (let index = 0; index < count; index += 1) {
@@ -973,6 +1011,7 @@ async function handleAdmin(user, req, res, url, body) {
           expires_at: addDaysIso(days),
           used_by: null,
           used_at: null,
+          reusable,
           revoked_at: null,
           created_at: nowIso(),
         };
@@ -1152,15 +1191,29 @@ function publicInvite(invite) {
     expires_at: invite.expires_at,
     used_by: invite.used_by,
     used_at: invite.used_at,
+    reusable: Boolean(invite.reusable),
     revoked_at: invite.revoked_at,
     status: invite.revoked_at
       ? "revoked"
+      : invite.reusable
+        ? isPast(invite.expires_at)
+          ? "expired"
+          : "reusable"
       : invite.used_at
         ? "used"
         : isPast(invite.expires_at)
           ? "expired"
           : "unused",
   };
+}
+
+function isInviteUsable(invite) {
+  return Boolean(
+    invite &&
+      (invite.reusable || !invite.used_at) &&
+      !invite.revoked_at &&
+      !isPast(invite.expires_at),
+  );
 }
 
 function publicGroup(group, viewerId = null) {

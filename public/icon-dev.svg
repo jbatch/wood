@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#7a4b00"/>
+  <path d="M104 312c0-78 59-142 132-142h74c54 0 98 47 98 104s-44 104-98 104H170c-36 0-66-30-66-66Z" fill="#d6a04a"/>
+  <path d="M162 312c0-43 33-78 74-78h74c19 0 35 18 35 40s-16 40-35 40H170c-4 0-8-1-8-2Z" fill="#ffd56d"/>
+  <path d="M179 312c15-41 43-63 84-63h45" fill="none" stroke="#80501e" stroke-width="22" stroke-linecap="round"/>
+  <circle cx="380" cy="132" r="64" fill="#fff0a8"/>
+  <text x="380" y="146" text-anchor="middle" font-family="Arial, sans-serif" font-size="38" font-weight="900" fill="#7a4b00">DEV</text>
+</svg>

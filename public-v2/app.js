@@ -1074,6 +1074,13 @@ function adminInvitesHtml() {
           <input class="field-input" name="days" type="number" min="1" max="90" value="7" />
         </div>
       </div>
+      <label class="toggle-row compact-toggle">
+        <span>
+          <strong>Reusable link</strong>
+          <small>Can create multiple accounts until it expires</small>
+        </span>
+        <input name="reusable" type="checkbox" />
+      </label>
       <button class="btn-primary" type="submit">Generate invites</button>
     </form>
     <div class="section-head">Invites</div>
@@ -1091,7 +1098,10 @@ function inviteCardHtml(invite) {
         <div class="admin-sub">${escHtml(invite.url)}</div>
         <div class="admin-meta">Expires ${formatDate(invite.expires_at)}</div>
       </div>
-      ${invite.status === "unused" ? `<button class="chip-btn" data-invite="${invite.id}">Revoke</button>` : ""}
+      <div class="admin-actions invite-actions">
+        <button class="chip-btn accent" data-copy-invite="${escHtml(invite.url)}">Copy</button>
+        ${["unused", "reusable"].includes(invite.status) ? `<button class="chip-btn" data-invite="${invite.id}">Revoke</button>` : ""}
+      </div>
     </div>
   `;
 }
@@ -1236,6 +1246,7 @@ function bindAdmin() {
   document.querySelector("#invite-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const payload = Object.fromEntries(new FormData(event.currentTarget).entries());
+    payload.reusable = payload.reusable === "on";
     await api("/api/admin/invites", { method: "POST", body: payload });
     state.admin = await api("/api/admin");
     renderAdmin();
@@ -1256,6 +1267,13 @@ function bindAdmin() {
   document.querySelectorAll("[data-invite]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       state.admin = await api(`/api/admin/invites/${btn.dataset.invite}/revoke`, { method: "POST" });
+      renderAdmin();
+    });
+  });
+  document.querySelectorAll("[data-copy-invite]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await copyText(btn.dataset.copyInvite);
+      state.error = "Invite link copied";
       renderAdmin();
     });
   });
@@ -1467,6 +1485,26 @@ function showToast(message) {
     state.toast = "";
     if (state.session?.user) render();
   }, 2200);
+}
+
+async function copyText(text) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall back to the old selection API below.
+    }
+  }
+  const input = document.createElement("textarea");
+  input.value = text;
+  input.setAttribute("readonly", "");
+  input.style.position = "fixed";
+  input.style.opacity = "0";
+  document.body.append(input);
+  input.select();
+  document.execCommand("copy");
+  input.remove();
 }
 
 function without(object, keys) {
