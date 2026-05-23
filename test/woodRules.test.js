@@ -4,6 +4,7 @@ import {
   achievementProgress,
   ensureAchievementDefinitions,
   evaluateAchievements,
+  resetAchievements,
 } from "../src/achievements.js";
 import {
   canCreateGroupWith,
@@ -146,6 +147,52 @@ test("achievement definitions can be earned from wood volume", () => {
   assert.equal(progress.find((achievement) => achievement.slug === "first-knock").earned, true);
 });
 
+test("achievement definitions refresh renamed copy", () => {
+  const db = dbWithWoods();
+  db.achievements_def.push({
+    id: "achievement_old",
+    slug: "early-bird",
+    name: "Early Bird",
+    description: "Send a Wood between 5am and 6am",
+    icon: "sun",
+    criteria_type: "special",
+    criteria_value: "early_bird",
+  });
+
+  ensureAchievementDefinitions(db);
+
+  const definition = db.achievements_def.find((achievement) => achievement.slug === "early-bird");
+  assert.equal(definition.name, "Morning Wood");
+  assert.equal(definition.description, "Send a Wood before 7am");
+  assert.equal(definition.icon, "am");
+});
+
+test("admin can reset earned achievements for one user", () => {
+  const db = dbWithWoods([
+    {
+      sender_id: "a",
+      recipient_id: "b",
+      sent_at: "2026-05-22T00:00:00.000Z",
+      type: "normal",
+    },
+    {
+      sender_id: "b",
+      recipient_id: "a",
+      sent_at: "2026-05-22T00:01:00.000Z",
+      type: "normal",
+    },
+  ]);
+  ensureAchievementDefinitions(db);
+  evaluateAchievements(db, "a");
+  evaluateAchievements(db, "b");
+
+  const resetCount = resetAchievements(db, "a");
+
+  assert.ok(resetCount > 0);
+  assert.equal(achievementProgress(db, "a").some((achievement) => achievement.earned), false);
+  assert.equal(achievementProgress(db, "b").some((achievement) => achievement.earned), true);
+});
+
 test("achievements cover special reply and long wood rituals", () => {
   const db = dbWithWoods([
     {
@@ -165,12 +212,136 @@ test("achievements cover special reply and long wood rituals", () => {
   ]);
   ensureAchievementDefinitions(db);
 
-  const earned = evaluateAchievements(db, "a");
+  const earned = evaluateAchievements(db, "a", { wood: db.woods[1] });
   const slugs = earned.map((achievement) => achievement.slug);
 
   assert.ok(slugs.includes("long-game"));
   assert.ok(slugs.includes("speedy-reply"));
   assert.ok(slugs.includes("mutual"));
+});
+
+test("reply achievements are tied to the current Wood", () => {
+  const db = dbWithWoods([
+    {
+      id: "old_incoming",
+      sender_id: "b",
+      recipient_id: "a",
+      sent_at: "2026-05-22T00:00:00.000Z",
+      type: "normal",
+    },
+    {
+      id: "old_reply",
+      sender_id: "a",
+      recipient_id: "b",
+      sent_at: "2026-05-22T00:00:08.000Z",
+      type: "normal",
+    },
+    {
+      id: "current",
+      sender_id: "a",
+      recipient_id: "b",
+      sent_at: "2026-05-23T00:10:00.000Z",
+      type: "normal",
+    },
+  ]);
+  ensureAchievementDefinitions(db);
+
+  const earned = evaluateAchievements(db, "a", { wood: db.woods[2] });
+  const slugs = earned.map((achievement) => achievement.slug);
+
+  assert.equal(slugs.includes("mutual"), false);
+  assert.equal(slugs.includes("speedy-reply"), false);
+  assert.equal(slugs.includes("fashionably-late"), false);
+});
+
+test("fashionably late requires saving a streak just before it breaks", () => {
+  const onTime = dbWithWoods([
+    {
+      id: "incoming",
+      sender_id: "b",
+      recipient_id: "a",
+      sent_at: "2026-05-23T23:50:00.000Z",
+      type: "normal",
+    },
+    {
+      id: "current",
+      sender_id: "a",
+      recipient_id: "b",
+      sent_at: "2026-05-23T23:56:00.000Z",
+      type: "normal",
+    },
+  ]);
+  onTime.streaks.push({
+    id: "streak_1",
+    user_a_id: "a",
+    user_b_id: "b",
+    current_streak: 2,
+    longest_streak: 2,
+    last_exchange_at: "2026-05-22T00:00:00.000Z",
+    at_risk: true,
+    milestones_sent: [],
+    updated_at: "2026-05-22T00:00:00.000Z",
+  });
+  ensureAchievementDefinitions(onTime);
+  const onTimeStreakResult = updatePairStreakAfterWood(
+    onTime,
+    "a",
+    "b",
+    onTime.woods[1].sent_at,
+  );
+
+  const onTimeSlugs = evaluateAchievements(onTime, "a", {
+    wood: onTime.woods[1],
+    streakResult: onTimeStreakResult,
+  })
+    .map((achievement) => achievement.slug);
+
+  assert.ok(onTimeSlugs.includes("mutual"));
+  assert.ok(onTimeSlugs.includes("fashionably-late"));
+  assert.equal(onTimeSlugs.includes("speedy-reply"), false);
+
+  const tooLate = dbWithWoods([
+    {
+      id: "incoming",
+      sender_id: "b",
+      recipient_id: "a",
+      sent_at: "2026-05-24T00:00:00.000Z",
+      type: "normal",
+    },
+    {
+      id: "current",
+      sender_id: "a",
+      recipient_id: "b",
+      sent_at: "2026-05-24T00:01:00.000Z",
+      type: "normal",
+    },
+  ]);
+  tooLate.streaks.push({
+    id: "streak_1",
+    user_a_id: "a",
+    user_b_id: "b",
+    current_streak: 2,
+    longest_streak: 2,
+    last_exchange_at: "2026-05-22T00:00:00.000Z",
+    at_risk: true,
+    milestones_sent: [],
+    updated_at: "2026-05-22T00:00:00.000Z",
+  });
+  ensureAchievementDefinitions(tooLate);
+  const tooLateStreakResult = updatePairStreakAfterWood(
+    tooLate,
+    "a",
+    "b",
+    tooLate.woods[1].sent_at,
+  );
+
+  const tooLateSlugs = evaluateAchievements(tooLate, "a", {
+    wood: tooLate.woods[1],
+    streakResult: tooLateStreakResult,
+  })
+    .map((achievement) => achievement.slug);
+
+  assert.equal(tooLateSlugs.includes("fashionably-late"), false);
 });
 
 test("morning wood secret unlocks before seven", () => {

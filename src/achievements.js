@@ -1,5 +1,9 @@
 import { id } from "./ids.js";
 
+const SPEEDY_REPLY_MS = 10 * 1000;
+const LATE_REPLY_WINDOW_MS = 5 * 60 * 1000;
+const STREAK_BREAK_MS = 48 * 60 * 60 * 1000;
+
 export const ACHIEVEMENTS = [
   {
     slug: "first-knock",
@@ -158,7 +162,7 @@ export const ACHIEVEMENTS = [
   {
     slug: "fashionably-late",
     name: "Fashionably Late",
-    description: "Reply just before the timeout",
+    description: "Save a streak just before it breaks",
     icon: "late",
     criteria_type: "special",
     criteria_value: "fashionably_late",
@@ -253,11 +257,7 @@ export function evaluateAchievements(db, userId, context = {}) {
   if (sent.some((wood) => localHour(wood.sent_at) >= 5 && localHour(wood.sent_at) < 7)) {
     slugs.add("early-bird");
   }
-  if (hasMutualWood(db, userId)) slugs.add("mutual");
-  if (hasReplyWithin(db, userId, 0, 10 * 1000)) slugs.add("speedy-reply");
-  if (hasReplyWithin(db, userId, 23 * 60 * 60 * 1000 + 55 * 60 * 1000)) {
-    slugs.add("fashionably-late");
-  }
+  addCurrentReplySlugs(db, userId, context, slugs);
 
   if (context.slugs) {
     for (const slug of context.slugs) slugs.add(slug);
@@ -289,6 +289,13 @@ export function awardAchievements(db, userId, slugs, earnedAt = new Date().toISO
   return created;
 }
 
+export function resetAchievements(db, userId) {
+  db.achievements_earned ||= [];
+  const before = db.achievements_earned.length;
+  db.achievements_earned = db.achievements_earned.filter((earned) => earned.user_id !== userId);
+  return before - db.achievements_earned.length;
+}
+
 function addThresholdSlugs(slugs, criteriaType, count) {
   for (const definition of ACHIEVEMENTS) {
     if (definition.criteria_type !== criteriaType) continue;
@@ -315,31 +322,70 @@ function hasAllSeasonalWoods(db, sent) {
   return [...labels].every((label) => sentLabels.has(label));
 }
 
-function hasMutualWood(db, userId) {
-  return (db.woods || []).some((wood) => {
-    if (wood.sender_id !== userId) return false;
-    return (db.woods || []).some(
-      (other) =>
-        other.sender_id === wood.recipient_id &&
-        other.recipient_id === userId,
-    );
-  });
-}
-
-function hasReplyWithin(db, userId, minMs, maxMs = Infinity) {
-  return (db.woods || []).some((wood) => {
-    if (wood.sender_id !== userId) return false;
-    const sentMs = Date.parse(wood.sent_at);
-    return (db.woods || []).some((incoming) => {
-      if (incoming.sender_id !== wood.recipient_id || incoming.recipient_id !== userId) {
-        return false;
-      }
-      const delta = sentMs - Date.parse(incoming.sent_at);
-      return delta >= minMs && delta <= maxMs;
-    });
-  });
-}
-
 function localHour(iso) {
   return new Date(iso).getHours();
+}
+
+function addCurrentReplySlugs(db, userId, context, slugs) {
+  const { wood } = context;
+  const delta = currentReplyDeltaMs(db, userId, wood);
+  if (delta === null) return;
+
+  slugs.add("mutual");
+  if (delta <= SPEEDY_REPLY_MS) slugs.add("speedy-reply");
+
+  if (savedStreakAtLastMinute(context.streakResult)) {
+    slugs.add("fashionably-late");
+  }
+}
+
+function savedStreakAtLastMinute(streakResult) {
+  if (!streakResult?.incremented) return false;
+  if (!streakResult.previousCount) return false;
+  if (!streakResult.previousLastExchangeAt) return false;
+
+  const ageMs = Date.parse(streakResult.sentAt) - Date.parse(streakResult.previousLastExchangeAt);
+  const lateStartMs = STREAK_BREAK_MS - LATE_REPLY_WINDOW_MS;
+  return ageMs >= lateStartMs && ageMs <= STREAK_BREAK_MS;
+}
+
+function currentReplyDeltaMs(db, userId, wood) {
+  if (!wood || wood.sender_id !== userId || !wood.recipient_id || !wood.sent_at) return null;
+
+  const currentMs = Date.parse(wood.sent_at);
+  const latestIncoming = latestWoodBefore(
+    db,
+    wood.recipient_id,
+    userId,
+    currentMs,
+    wood.id,
+  );
+  if (!latestIncoming) return null;
+
+  const latestPriorOutgoing = latestWoodBefore(
+    db,
+    userId,
+    wood.recipient_id,
+    currentMs,
+    wood.id,
+  );
+  if (
+    latestPriorOutgoing &&
+    Date.parse(latestPriorOutgoing.sent_at) > Date.parse(latestIncoming.sent_at)
+  ) {
+    return null;
+  }
+
+  const delta = currentMs - Date.parse(latestIncoming.sent_at);
+  return delta >= 0 ? delta : null;
+}
+
+function latestWoodBefore(db, senderId, recipientId, beforeMs, excludeId) {
+  return (db.woods || [])
+    .filter((candidate) => {
+      if (candidate.id && candidate.id === excludeId) return false;
+      if (candidate.sender_id !== senderId || candidate.recipient_id !== recipientId) return false;
+      return Date.parse(candidate.sent_at) < beforeMs;
+    })
+    .sort((a, b) => Date.parse(b.sent_at) - Date.parse(a.sent_at))[0] || null;
 }

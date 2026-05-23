@@ -1508,6 +1508,15 @@ html, body {
   transform: scale(0.96);
 }
 
+.chip-btn:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.chip-btn:disabled:active {
+  transform: none;
+}
+
 .chip-btn.accent {
   color: var(--accent);
   border-color: rgba(62, 214, 105, 0.35);

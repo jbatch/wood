@@ -25,6 +25,7 @@ import {
   achievementProgress,
   awardAchievements,
   evaluateAchievements,
+  resetAchievements,
 } from "./achievements.js";
 import { id, inviteCode } from "./ids.js";
 import { addDaysIso, isPast, nowIso } from "./time.js";
@@ -831,7 +832,9 @@ async function sendWood(user, res, recipientId, body) {
     await notifyStreakMilestone(user, recipient, streakResult.milestone);
   }
 
-  await evaluateAndNotifyAchievements([user.id]);
+  await evaluateAndNotifyAchievements([user.id], {
+    [user.id]: { wood, streakResult, earnedAt: wood.sent_at },
+  });
   sendJson(res, 201, appState(user));
 }
 
@@ -968,10 +971,10 @@ async function notifyStreakMilestone(sender, recipient, count) {
   });
 }
 
-async function evaluateAndNotifyAchievements(userIds) {
+async function evaluateAndNotifyAchievements(userIds, contextByUser = {}) {
   const uniqueUserIds = [...new Set(userIds)].filter(Boolean);
   for (const userId of uniqueUserIds) {
-    const earned = await store.write((db) => evaluateAchievements(db, userId));
+    const earned = await store.write((db) => evaluateAchievements(db, userId, contextByUser[userId] || {}));
     await notifyAchievements(userId, earned);
   }
 }
@@ -1165,6 +1168,25 @@ async function handleAdmin(user, req, res, url, body) {
       awardAchievements(db, target.id, [slug], nowIso()),
     );
     await notifyAchievements(target.id, earned);
+    sendJson(res, 200, adminState());
+    return;
+  }
+
+  const resetUserAchievements = url.pathname.match(/^\/api\/admin\/users\/([^/]+)\/achievements\/reset$/);
+  if (req.method === "POST" && resetUserAchievements) {
+    const target = store.db.users.find((candidate) => candidate.id === resetUserAchievements[1]);
+    if (!target) {
+      sendJson(res, 404, { error: "not_found" });
+      return;
+    }
+    const resetCount = await store.write((db) => resetAchievements(db, target.id));
+    debugLog("achievement.reset", {
+      adminId: user.id,
+      adminUsername: user.username,
+      targetId: target.id,
+      targetUsername: target.username,
+      resetCount,
+    });
     sendJson(res, 200, adminState());
     return;
   }

@@ -157,6 +157,8 @@ export function updatePairStreakAfterWood(db, senderId, recipientId, sentAt = ne
     (wood) => toMs(wood.sent_at) <= nowMs,
   );
   const lastExchangeMs = streak.last_exchange_at ? toMs(streak.last_exchange_at) : null;
+  const previousCount = streak.current_streak;
+  const previousLastExchangeAt = streak.last_exchange_at;
   const hasNewOpposite =
     opposite &&
     (!lastExchangeMs || toMs(opposite.sent_at) > lastExchangeMs) &&
@@ -165,10 +167,16 @@ export function updatePairStreakAfterWood(db, senderId, recipientId, sentAt = ne
   if (!hasNewOpposite) {
     streak.at_risk = isAtRisk(streak, nowMs);
     streak.updated_at = new Date(nowMs).toISOString();
-    return { streak, incremented: false, milestone: null };
+    return {
+      streak,
+      incremented: false,
+      milestone: null,
+      previousCount,
+      previousLastExchangeAt,
+      sentAt: new Date(nowMs).toISOString(),
+    };
   }
 
-  const previousCount = streak.current_streak;
   if (!lastExchangeMs || nowMs - lastExchangeMs > STREAK_BREAK_MS) {
     streak.current_streak = 1;
   } else if (nowMs - lastExchangeMs >= STREAK_INCREMENT_MIN_MS) {
@@ -182,7 +190,14 @@ export function updatePairStreakAfterWood(db, senderId, recipientId, sentAt = ne
 
   const incremented = streak.current_streak > previousCount;
   const milestone = incremented ? nextMilestone(streak) : null;
-  return { streak, incremented, milestone };
+  return {
+    streak,
+    incremented,
+    milestone,
+    previousCount,
+    previousLastExchangeAt,
+    sentAt: new Date(nowMs).toISOString(),
+  };
 }
 
 export function rebuildStreaksFromWoods(db) {
