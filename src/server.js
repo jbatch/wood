@@ -30,6 +30,13 @@ import { id, inviteCode } from "./ids.js";
 import { addDaysIso, isPast, nowIso } from "./time.js";
 import { createStore } from "./store.js";
 import {
+  friendRequestAcceptedNotification,
+  friendRequestNotification,
+  groupInviteAcceptedNotification,
+  groupInviteNotification,
+  inviteUsedNotification,
+} from "./eventNotifications.js";
+import {
   canSendWood,
   findFriendship,
   getAcceptedFriendIds,
@@ -371,7 +378,7 @@ async function signup(req, res, body) {
       invite.used_by = user.id;
       invite.used_at = nowIso();
     }
-    return { user };
+    return { user, invite: { ...invite } };
   });
 
   if (result.error) {
@@ -382,6 +389,16 @@ async function signup(req, res, body) {
     maxAge: SESSION_MAX_AGE_SECONDS,
     secure: req.headers["x-forwarded-proto"] === "https",
   });
+  if (result.invite?.created_by) {
+    const creator = store.db.users.find((candidate) => candidate.id === result.invite.created_by);
+    if (creator && creator.id !== result.user.id) {
+      await notifyAndPrune(creator.id, inviteUsedNotification(result.user, result.invite, creator), {
+        event: "invite.used",
+        inviteId: result.invite.id,
+        joinedUserId: result.user.id,
+      });
+    }
+  }
   sendJson(res, 201, { user: publicUser(result.user) });
 }
 
@@ -537,11 +554,10 @@ async function createGroup(user, res, body) {
   });
 
   for (const memberId of memberState.memberIds) {
-    await notifyUser(store.db, memberId, {
-      title: "Wood group",
-      body: `${user.username} invited you to ${group.name}`,
-      url: "/?tab=groups",
+    await notifyAndPrune(memberId, groupInviteNotification(user, group), {
+      event: "group.invite.created",
       groupId: group.id,
+      invitedUserId: memberId,
     });
   }
 
@@ -559,11 +575,23 @@ async function respondToGroupInvite(user, res, membershipId, action) {
     if (!membership) return { error: "not_found" };
     membership.status = action === "accept" ? "accepted" : "declined";
     membership.updated_at = nowIso();
-    return { membership };
+    const group = db.groups.find((candidate) => candidate.id === membership.group_id);
+    return { membership, group };
   });
   if (result.error) {
     sendJson(res, 404, { error: result.error });
     return;
+  }
+  if (action === "accept" && result.membership.invited_by) {
+    await notifyAndPrune(
+      result.membership.invited_by,
+      groupInviteAcceptedNotification(user, result.group),
+      {
+        event: "group.invite.accepted",
+        groupId: result.membership.group_id,
+        memberId: user.id,
+      },
+    );
   }
   sendJson(res, 200, appState(user));
 }
@@ -606,10 +634,10 @@ async function requestFriend(user, res, body) {
     return;
   }
 
-  await notifyUser(store.db, result.recipient.id, {
-    title: "Wood",
-    body: `${user.username} wants to be your friend`,
-    url: "/",
+  await notifyAndPrune(result.recipient.id, friendRequestNotification(user), {
+    event: "friend_request.created",
+    friendshipId: result.friendship.id,
+    requesterId: user.id,
   });
   sendJson(res, 201, { request: { id: result.friendship.id } });
 }
@@ -637,6 +665,15 @@ async function respondToFriendRequest(user, res, friendshipId, action) {
   }
   if (achievementUsers.length) {
     await evaluateAndNotifyAchievements(achievementUsers);
+    await notifyAndPrune(
+      result.friendship.requester_id,
+      friendRequestAcceptedNotification(user),
+      {
+        event: "friend_request.accepted",
+        friendshipId: result.friendship.id,
+        accepterId: user.id,
+      },
+    );
   }
   sendJson(res, 200, appState(user));
 }
@@ -758,7 +795,7 @@ async function sendWood(user, res, recipientId, body) {
       wood: variant.label,
       seasonal,
     });
-    const result = await notifyUser(store.db, recipientId, {
+    const result = await notifyAndPrune(recipientId, {
       title: notification.title,
       body: notification.body,
       icon: notification.icon,
@@ -769,6 +806,10 @@ async function sendWood(user, res, recipientId, body) {
       url: `/?friend=${encodeURIComponent(user.id)}`,
       friendId: user.id,
       woodId: wood.id,
+    }, {
+      event: "wood.created",
+      woodId: wood.id,
+      recipientId,
     });
     debugLog("wood.push_result", {
       woodId: wood.id,
@@ -778,15 +819,6 @@ async function sendWood(user, res, recipientId, body) {
       disabled: Boolean(result.disabled),
       staleCount: result.stale.length,
     });
-    if (result.stale.length) {
-      await store.write((db) => {
-        db.push_subs = db.push_subs.filter((sub) => !result.stale.includes(sub.id));
-      });
-      debugLog("push.stale_pruned", {
-        woodId: wood.id,
-        staleCount: result.stale.length,
-      });
-    }
   } else {
     debugLog("wood.push_skipped_muted", {
       woodId: wood.id,
@@ -845,7 +877,7 @@ async function sendGroupWood(user, res, groupId, body) {
     .map((member) => member.user_id)
     .filter((memberId) => memberId !== user.id);
   for (const recipientId of recipients) {
-    const result = await notifyUser(store.db, recipientId, {
+    await notifyAndPrune(recipientId, {
       title: notification.title,
       body: notification.body,
       icon: notification.icon,
@@ -856,12 +888,12 @@ async function sendGroupWood(user, res, groupId, body) {
       url: `/?tab=groups&group=${encodeURIComponent(groupId)}`,
       groupId,
       woodId: wood.id,
+    }, {
+      event: "group_wood.created",
+      woodId: wood.id,
+      groupId,
+      recipientId,
     });
-    if (result.stale.length) {
-      await store.write((db) => {
-        db.push_subs = db.push_subs.filter((sub) => !result.stale.includes(sub.id));
-      });
-    }
   }
 
   debugLog("group_wood.created", {
@@ -905,19 +937,27 @@ async function groupWoodHistory(user, res, groupId) {
 }
 
 async function notifyStreakMilestone(sender, recipient, count) {
-  const senderResult = await notifyUser(store.db, sender.id, {
+  const senderResult = await notifyAndPrune(sender.id, {
     title: "Wood streak",
     body: `You and ${recipient.username} have a ${count}-day Wood streak!`,
     url: `/?friend=${encodeURIComponent(recipient.id)}`,
     friendId: recipient.id,
     streak: count,
+  }, {
+    event: "streak.milestone",
+    friendId: recipient.id,
+    count,
   });
-  const recipientResult = await notifyUser(store.db, recipient.id, {
+  const recipientResult = await notifyAndPrune(recipient.id, {
     title: "Wood streak",
     body: `You and ${sender.username} have a ${count}-day Wood streak!`,
     url: `/?friend=${encodeURIComponent(sender.id)}`,
     friendId: sender.id,
     streak: count,
+  }, {
+    event: "streak.milestone",
+    friendId: sender.id,
+    count,
   });
   debugLog("streak.milestone", {
     senderId: sender.id,
@@ -941,10 +981,13 @@ async function notifyAchievements(userId, achievements) {
   const user = store.db.users.find((candidate) => candidate.id === userId);
   if (!user) return;
   for (const achievement of achievements) {
-    const result = await notifyUser(store.db, userId, {
+    const result = await notifyAndPrune(userId, {
       title: "Achievement unlocked",
       body: `${achievement.name}: ${achievement.description}`,
       url: "/?tab=stats",
+      achievement: achievement.slug,
+    }, {
+      event: "achievement.unlocked",
       achievement: achievement.slug,
     });
     debugLog("achievement.unlocked", {
@@ -955,6 +998,21 @@ async function notifyAchievements(userId, achievements) {
       disabled: Boolean(result.disabled),
     });
   }
+}
+
+async function notifyAndPrune(recipientId, payload, context = {}) {
+  const result = await notifyUser(store.db, recipientId, payload);
+  if (result.stale.length) {
+    await store.write((db) => {
+      db.push_subs = db.push_subs.filter((sub) => !result.stale.includes(sub.id));
+    });
+    debugLog("push.stale_pruned", {
+      ...context,
+      recipientId,
+      staleCount: result.stale.length,
+    });
+  }
+  return result;
 }
 
 async function handleAdmin(user, req, res, url, body) {
@@ -1067,7 +1125,7 @@ async function handleAdmin(user, req, res, url, body) {
       wood: requestedStyle ? `Test ${requestedStyle.id} Wood` : "Test Wood",
       styleId: requestedStyle?.id,
     });
-    const result = await notifyUser(store.db, target.id, {
+    const result = await notifyAndPrune(target.id, {
       title: "Wood test",
       body: `${notification.title}: ${notification.body}`,
       icon: notification.icon,
@@ -1077,12 +1135,10 @@ async function handleAdmin(user, req, res, url, body) {
       styleId: notification.id,
       url: "/admin",
       test: true,
+    }, {
+      event: "push.admin_test",
+      targetId: target.id,
     });
-    if (result.stale.length) {
-      await store.write((db) => {
-        db.push_subs = db.push_subs.filter((sub) => !result.stale.includes(sub.id));
-      });
-    }
     debugLog("push.admin_test", {
       adminId: user.id,
       adminUsername: user.username,

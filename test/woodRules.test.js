@@ -26,6 +26,13 @@ import {
   WOOD_NOTIFICATION_PRESETS,
   WOOD_NOTIFICATION_TITLES,
 } from "../src/notificationCopy.js";
+import {
+  friendRequestAcceptedNotification,
+  friendRequestNotification,
+  groupInviteAcceptedNotification,
+  groupInviteNotification,
+  inviteUsedNotification,
+} from "../src/eventNotifications.js";
 
 function dbWithWoods(woods = []) {
   return {
@@ -164,6 +171,27 @@ test("achievements cover special reply and long wood rituals", () => {
   assert.ok(slugs.includes("long-game"));
   assert.ok(slugs.includes("speedy-reply"));
   assert.ok(slugs.includes("mutual"));
+});
+
+test("morning wood secret unlocks before seven", () => {
+  const localSixThirty = new Date(2026, 4, 22, 6, 30).toISOString();
+  const db = dbWithWoods([
+    {
+      sender_id: "a",
+      recipient_id: "b",
+      sent_at: localSixThirty,
+      type: "normal",
+      hold_duration_ms: 0,
+    },
+  ]);
+  ensureAchievementDefinitions(db);
+
+  const earned = evaluateAchievements(db, "a");
+  const slugs = earned.map((achievement) => achievement.slug);
+  const morningWood = earned.find((achievement) => achievement.slug === "early-bird");
+
+  assert.ok(slugs.includes("early-bird"));
+  assert.equal(morningWood.name, "Morning Wood");
 });
 
 test("a user is on cooldown after sending until the timeout expires", () => {
@@ -401,4 +429,44 @@ test("notification copy has a large backend-owned template pool", () => {
   assert.ok(WOOD_NOTIFICATION_TITLES.length >= 80);
   assert.ok(WOOD_NOTIFICATION_BODIES.length >= 200);
   assert.ok(WOOD_NOTIFICATION_PRESETS.length >= 70);
+});
+
+test("social notifications point users at open-worthy events", () => {
+  const alice = { id: "a", username: "alice", role: "admin" };
+  const bob = { id: "b", username: "bob", role: "user" };
+  const group = { id: "group_1", name: "Friday Woods" };
+  const invite = { id: "invite_1" };
+
+  assert.deepEqual(friendRequestNotification(alice), {
+    title: "Wood friend request",
+    body: "alice wants to Wood with you",
+    url: "/",
+    friendId: "a",
+  });
+  assert.deepEqual(friendRequestAcceptedNotification(bob), {
+    title: "Wood friend accepted",
+    body: "bob accepted your friend request",
+    url: "/?friend=b",
+    friendId: "b",
+  });
+  assert.deepEqual(groupInviteNotification(alice, group), {
+    title: "Wood group invite",
+    body: "alice invited you to Friday Woods",
+    url: "/?tab=groups",
+    groupId: "group_1",
+  });
+  assert.deepEqual(groupInviteAcceptedNotification(bob, group), {
+    title: "Wood group",
+    body: "bob joined Friday Woods",
+    url: "/?tab=groups&group=group_1",
+    groupId: "group_1",
+    userId: "b",
+  });
+  assert.deepEqual(inviteUsedNotification(bob, invite, alice), {
+    title: "Wood invite used",
+    body: "bob joined Wood with your invite",
+    url: "/admin",
+    inviteId: "invite_1",
+    userId: "b",
+  });
 });

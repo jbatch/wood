@@ -140,9 +140,9 @@ export const ACHIEVEMENTS = [
   },
   {
     slug: "early-bird",
-    name: "Early Bird",
-    description: "Send a Wood between 5am and 6am",
-    icon: "5a",
+    name: "Morning Wood",
+    description: "Send a Wood before 7am",
+    icon: "am",
     criteria_type: "special",
     criteria_value: "early_bird",
     secret: true,
@@ -250,7 +250,7 @@ export function evaluateAchievements(db, userId, context = {}) {
   if (sent.some((wood) => localHour(wood.sent_at) >= 2 && localHour(wood.sent_at) < 4)) {
     slugs.add("night-owl");
   }
-  if (sent.some((wood) => localHour(wood.sent_at) >= 5 && localHour(wood.sent_at) < 6)) {
+  if (sent.some((wood) => localHour(wood.sent_at) >= 5 && localHour(wood.sent_at) < 7)) {
     slugs.add("early-bird");
   }
   if (hasMutualWood(db, userId)) slugs.add("mutual");
