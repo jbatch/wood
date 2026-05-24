@@ -140,11 +140,92 @@ async function seedBackfillDb(dbFile) {
   store.sqlite.close();
 }
 
+async function seedNotificationCopyDb(dbFile) {
+  const store = await createStore(dbFile);
+  await store.write(async (db) => {
+    db.invites = [];
+    db.friendships = [];
+    db.groups = [];
+    db.group_members = [];
+    db.group_woods = [];
+    db.mutes = [];
+    db.password_resets = [];
+    db.push_subs = [];
+    db.streaks = [];
+    db.woods = [];
+    db.achievements_earned = [];
+    db.users = [
+      {
+        id: "bob",
+        username: "bob.copy",
+        email: "bob.copy@example.com",
+        password_hash: await hashPassword("bob-password"),
+        role: "user",
+        suspended: false,
+        favourite_wood: "",
+        birthday_month: null,
+        birthday_day: null,
+        birthday_visible: false,
+        notification_snoozed_until: null,
+        pwa_installed_at: null,
+        pwa_last_seen_at: null,
+        pwa_display_mode: null,
+        created_at: "2026-05-20T00:00:00.000Z",
+        last_active_at: null,
+        deleted_at: null,
+      },
+    ];
+    db.notifications = [
+      {
+        id: "notification_old_wood",
+        user_id: "bob",
+        type: "wood.dm",
+        title: "alice sent you Wood",
+        body: "Recent Wood history, now with a mailbox.",
+        url: "/",
+        actor_id: null,
+        data_json: "{}",
+        dedupe_key: "old_wood",
+        read_at: "2026-05-20T00:00:00.000Z",
+        created_at: "2026-05-20T00:00:00.000Z",
+      },
+      {
+        id: "notification_old_group",
+        user_id: "bob",
+        type: "wood.group",
+        title: "alice sent Wood to Group",
+        body: "Group Wood history, now neatly stacked.",
+        url: "/",
+        actor_id: null,
+        data_json: "{}",
+        dedupe_key: "old_group",
+        read_at: "2026-05-20T00:00:00.000Z",
+        created_at: "2026-05-20T00:01:00.000Z",
+      },
+    ];
+    db.config.notification_backfilled_at = "2026-05-20T00:00:00.000Z";
+    delete db.config.notification_copy_cleaned_at;
+  });
+  store.sqlite.close();
+}
+
 async function loginAndReadNotifications(baseUrl) {
   const request = client(baseUrl);
   let response = await request("/api/login", {
     method: "POST",
     body: { username: "bob.backfill", password: "bob-password" },
+  });
+  assert.equal(response.res.status, 200);
+  response = await request("/api/notifications");
+  assert.equal(response.res.status, 200);
+  return response.data;
+}
+
+async function loginAndReadCopyNotifications(baseUrl) {
+  const request = client(baseUrl);
+  let response = await request("/api/login", {
+    method: "POST",
+    body: { username: "bob.copy", password: "bob-password" },
   });
   assert.equal(response.res.status, 200);
   response = await request("/api/notifications");
@@ -387,6 +468,7 @@ test("notification backfill is a no-op after restart", async (t) => {
   let data = await loginAndReadNotifications(server.baseUrl);
   assert.equal(data.notifications.length, 1);
   assert.equal(data.notifications[0].type, "wood.dm");
+  assert.equal(data.notifications[0].body, "Direct Wood Received");
   assert.equal(data.unread_count, 0);
   await server.stop();
 
@@ -397,5 +479,35 @@ test("notification backfill is a no-op after restart", async (t) => {
   data = await loginAndReadNotifications(server.baseUrl);
   assert.equal(data.notifications.length, 1);
   assert.equal(data.notifications[0].type, "wood.dm");
+  assert.equal(data.notifications[0].body, "Direct Wood Received");
   assert.equal(data.unread_count, 0);
+});
+
+test("notification copy cleanup normalizes existing backfilled rows once", async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wood-copy-cleanup-"));
+  const dbFile = path.join(dir, "wood.sqlite");
+  const dataFile = path.join(dir, "wood.json");
+  t.after(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  await seedNotificationCopyDb(dbFile);
+
+  let server = await startServerInstance({ dir, dbFile, dataFile });
+  let data = await loginAndReadCopyNotifications(server.baseUrl);
+  assert.deepEqual(
+    data.notifications.map((notification) => notification.body).sort(),
+    ["Direct Wood Received", "Group Wood Received"],
+  );
+  await server.stop();
+
+  server = await startServerInstance({ dir, dbFile, dataFile });
+  t.after(async () => {
+    await server.stop();
+  });
+  data = await loginAndReadCopyNotifications(server.baseUrl);
+  assert.deepEqual(
+    data.notifications.map((notification) => notification.body).sort(),
+    ["Direct Wood Received", "Group Wood Received"],
+  );
 });

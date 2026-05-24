@@ -125,6 +125,7 @@ const FAVOURITE_WOODS = [
 const FOREVER_SNOOZE_UNTIL = "9999-12-31T23:59:59.000Z";
 
 await backfillNotificationsIfNeeded();
+await cleanNotificationCopyIfNeeded();
 
 const requestListener = async (req, res) => {
   try {
@@ -1256,7 +1257,7 @@ async function sendWood(user, res, recipientId, body) {
     title: `${user.username} sent you ${variant.label}`,
     body: streakResult.incremented
       ? `Wood streak: ${streakResult.streak.current_streak}`
-      : "",
+      : "Direct Wood Received",
     url: `/?friend=${encodeURIComponent(user.id)}`,
     actor_id: user.id,
     data: { friendId: user.id, woodId: wood.id, type: wood.type },
@@ -1377,7 +1378,7 @@ async function sendGroupWood(user, res, groupId, body) {
       user_id: recipientId,
       type: "wood.group",
       title: `${user.username} sent ${variant.label} to ${group.name}`,
-      body: "",
+      body: "Group Wood Received",
       url: `/?tab=groups&group=${encodeURIComponent(groupId)}`,
       actor_id: user.id,
       data: { groupId, woodId: wood.id },
@@ -1597,7 +1598,7 @@ async function backfillNotificationsIfNeeded() {
         user_id: wood.recipient_id,
         type: "wood.dm",
         title: `${sender.username} sent you ${wood.label || "Wood"}`,
-        body: "",
+        body: "Direct Wood Received",
         url: `/?friend=${encodeURIComponent(sender.id)}`,
         actor_id: sender.id,
         data: { friendId: sender.id, woodId: wood.id },
@@ -1626,7 +1627,7 @@ async function backfillNotificationsIfNeeded() {
           user_id: recipientId,
           type: "wood.group",
           title: `${sender.username} sent ${wood.label || "Wood"} to ${group.name}`,
-          body: "",
+          body: "Group Wood Received",
           url: `/?tab=groups&group=${encodeURIComponent(group.id)}`,
           actor_id: sender.id,
           data: { groupId: group.id, woodId: wood.id },
@@ -1701,6 +1702,35 @@ async function backfillNotificationsIfNeeded() {
   debugLog("notifications.backfilled", {
     count: created,
     days: NOTIFICATION_BACKFILL_DAYS,
+  });
+}
+
+async function cleanNotificationCopyIfNeeded() {
+  if (store.db.config.notification_copy_cleaned_at) return;
+  const cleanedAt = nowIso();
+  const changed = await store.write((db) => {
+    let count = 0;
+    for (const notification of db.notifications) {
+      if (
+        notification.type === "wood.dm" &&
+        ["", "Recent Wood history, now with a mailbox.", "Direct Wood received."].includes(notification.body)
+      ) {
+        notification.body = "Direct Wood Received";
+        count += 1;
+      }
+      if (
+        notification.type === "wood.group" &&
+        ["", "Group Wood history, now neatly stacked.", "Group Wood received."].includes(notification.body)
+      ) {
+        notification.body = "Group Wood Received";
+        count += 1;
+      }
+    }
+    db.config.notification_copy_cleaned_at = cleanedAt;
+    return count;
+  });
+  debugLog("notifications.copy_cleaned", {
+    count: changed,
   });
 }
 
