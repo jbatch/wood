@@ -1713,6 +1713,41 @@ html, body {
   color: var(--text-faint);
 }
 
+.admin-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 0 9px;
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.status-chip.ok {
+  color: var(--accent);
+  border-color: rgba(62, 214, 105, 0.28);
+  background: var(--accent-dim);
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.75;
+}
+
 .form-card,
 .invite-form {
   margin: 0 16px 16px;
@@ -1789,6 +1824,46 @@ html, body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
+}
+
+.reset-link-box {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(62, 214, 105, 0.22);
+  border-radius: var(--radius-sm);
+  background: var(--accent-dim);
+}
+
+.reset-link-box strong,
+.reset-link-box span {
+  display: block;
+}
+
+.reset-link-box strong {
+  font-size: 12px;
+  color: var(--text);
+}
+
+.reset-link-box span {
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.reset-link-input {
+  grid-column: 1 / -1;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(12, 21, 16, 0.56);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  padding: 9px 10px;
 }
 
 .inline-actions {

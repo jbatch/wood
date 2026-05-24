@@ -16,6 +16,7 @@ import {
   SESSION_COOKIE,
   SESSION_MAX_AGE_SECONDS,
   hashPassword,
+  hashToken,
   signSession,
   verifyPassword,
   verifySession,
@@ -27,7 +28,7 @@ import {
   evaluateAchievements,
   resetAchievements,
 } from "./achievements.js";
-import { id, inviteCode } from "./ids.js";
+import { id, inviteCode, resetToken } from "./ids.js";
 import { addDaysIso, isPast, nowIso } from "./time.js";
 import { createStore } from "./store.js";
 import {
@@ -73,6 +74,13 @@ const store = await createStore();
 const realtimeClients = new Map();
 let realtimeEventId = 0;
 const REALTIME_HEARTBEAT_MS = 25000;
+const PWA_DISPLAY_MODES = new Set([
+  "browser",
+  "standalone",
+  "minimal-ui",
+  "fullscreen",
+  "window-controls-overlay",
+]);
 const FAVOURITE_WOODS = [
   "ash",
   "balsa",
@@ -229,6 +237,16 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/password-resets/verify") {
+    verifyPasswordReset(res, body);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/password-resets/complete") {
+    await completePasswordReset(req, res, body);
+    return;
+  }
+
   if (!user) {
     sendJson(res, 401, { error: "auth_required" });
     return;
@@ -256,6 +274,12 @@ async function handleApi(req, res, url) {
 
   if (req.method === "PATCH" && url.pathname === "/api/settings") {
     await updateSettings(user, res, body);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/client-status") {
+    await updateClientStatus(user, body);
+    sendNoContent(res);
     return;
   }
 
@@ -445,6 +469,9 @@ async function signup(req, res, body) {
       birthday_day: null,
       birthday_visible: false,
       notification_snoozed_until: null,
+      pwa_installed_at: null,
+      pwa_last_seen_at: null,
+      pwa_display_mode: null,
       created_at: nowIso(),
       last_active_at: nowIso(),
     };
@@ -480,6 +507,63 @@ async function signup(req, res, body) {
     }
   }
   sendJson(res, 201, { user: publicUser(result.user) });
+}
+
+function verifyPasswordReset(res, body) {
+  const reset = passwordResetFromToken(body.token);
+  if (!reset) {
+    sendJson(res, 404, { error: "invalid_reset_link" });
+    return;
+  }
+  const user = store.db.users.find((candidate) => candidate.id === reset.user_id);
+  sendJson(res, 200, {
+    valid: true,
+    username: user?.username || "someone",
+    expires_at: reset.expires_at,
+  });
+}
+
+async function completePasswordReset(req, res, body) {
+  const token = String(body.token || "");
+  const password = String(body.password || "");
+  const reset = passwordResetFromToken(token);
+  if (!reset) {
+    sendJson(res, 404, { error: "invalid_reset_link" });
+    return;
+  }
+  if (password.length < 8) {
+    sendJson(res, 400, { error: "weak_password" });
+    return;
+  }
+
+  const result = await store.write(async (db) => {
+    const freshReset = db.password_resets.find(
+      (candidate) => candidate.token_hash === hashToken(token),
+    );
+    const target = freshReset
+      ? db.users.find((candidate) => candidate.id === freshReset.user_id)
+      : null;
+    if (!freshReset || !target || freshReset.used_at || isPast(freshReset.expires_at)) {
+      return { error: "invalid_reset_link" };
+    }
+    if (target.deleted_at) return { error: "invalid_reset_link" };
+    if (target.suspended) return { error: "suspended" };
+    target.password_hash = await hashPassword(password);
+    target.last_active_at = nowIso();
+    freshReset.used_at = nowIso();
+    return { user: target };
+  });
+
+  if (result.error) {
+    sendJson(res, result.error === "suspended" ? 403 : 404, { error: result.error });
+    return;
+  }
+
+  setCookie(res, SESSION_COOKIE, signSession(result.user.id), {
+    maxAge: SESSION_MAX_AGE_SECONDS,
+    secure: req.headers["x-forwarded-proto"] === "https",
+  });
+  sendJson(res, 200, { user: publicUser(result.user) });
 }
 
 function appState(user) {
@@ -693,6 +777,23 @@ async function savePushSubscription(user, body) {
       subscriptionId,
       endpointHost: endpointHost(endpoint),
     });
+  });
+}
+
+async function updateClientStatus(user, body) {
+  const displayMode = cleanDisplayMode(body.displayMode);
+  const installed = Boolean(body.installed);
+  const pwaSeen = installed || displayMode !== "browser";
+  const seenAt = nowIso();
+
+  await store.write((db) => {
+    const fresh = db.users.find((candidate) => candidate.id === user.id);
+    if (!fresh) return;
+    fresh.pwa_display_mode = displayMode;
+    if (pwaSeen) {
+      fresh.pwa_last_seen_at = seenAt;
+      if (!fresh.pwa_installed_at) fresh.pwa_installed_at = seenAt;
+    }
   });
 }
 
@@ -1467,6 +1568,41 @@ async function handleAdmin(user, req, res, url, body) {
     return;
   }
 
+  const createPasswordReset = url.pathname.match(/^\/api\/admin\/users\/([^/]+)\/password-reset$/);
+  if (req.method === "POST" && createPasswordReset) {
+    const target = store.db.users.find((candidate) => candidate.id === createPasswordReset[1]);
+    if (!target || target.deleted_at) {
+      sendJson(res, 404, { error: "not_found" });
+      return;
+    }
+    const token = resetToken();
+    const expiresAt = addDaysIso(1);
+    await store.write((db) => {
+      db.password_resets.push({
+        id: id("reset"),
+        user_id: target.id,
+        token_hash: hashToken(token),
+        expires_at: expiresAt,
+        used_at: null,
+        created_by: user.id,
+        created_at: nowIso(),
+      });
+    });
+    debugLog("password_reset.created", {
+      adminId: user.id,
+      adminUsername: user.username,
+      userId: target.id,
+      username: target.username,
+      expiresAt,
+    });
+    sendJson(res, 200, {
+      link: `${config.baseUrl}/reset-password?token=${encodeURIComponent(token)}`,
+      expires_at: expiresAt,
+      admin: adminState(),
+    });
+    return;
+  }
+
   const dissolveGroup = url.pathname.match(/^\/api\/admin\/groups\/([^/]+)\/dissolve$/);
   if (req.method === "POST" && dissolveGroup) {
     await store.write((db) => {
@@ -1524,6 +1660,12 @@ function adminState() {
       email: user.email,
       created_at: user.created_at,
       last_active_at: user.last_active_at,
+      pwa_installed: Boolean(user.pwa_installed_at),
+      pwa_installed_at: user.pwa_installed_at,
+      pwa_last_seen_at: user.pwa_last_seen_at,
+      pwa_display_mode: user.pwa_display_mode || "unknown",
+      push_subscription_count: db.push_subs.filter((sub) => sub.user_id === user.id).length,
+      push_setup: db.push_subs.some((sub) => sub.user_id === user.id),
       friend_count: getAcceptedFriendIds(db, user.id).length,
       woods_sent: db.woods.filter((wood) => wood.sender_id === user.id).length,
       woods_received: db.woods.filter((wood) => wood.recipient_id === user.id).length,
@@ -1609,6 +1751,20 @@ function publicUser(user) {
     role: user.role,
     suspended: Boolean(user.suspended),
   };
+}
+
+function passwordResetFromToken(token) {
+  const tokenHash = hashToken(token);
+  const reset = store.db.password_resets.find((candidate) => candidate.token_hash === tokenHash);
+  if (!reset || reset.used_at || isPast(reset.expires_at)) return null;
+  const user = store.db.users.find((candidate) => candidate.id === reset.user_id);
+  if (!user || user.deleted_at) return null;
+  return reset;
+}
+
+function cleanDisplayMode(value) {
+  const displayMode = String(value || "browser");
+  return PWA_DISPLAY_MODES.has(displayMode) ? displayMode : "browser";
 }
 
 function editableProfile(user) {

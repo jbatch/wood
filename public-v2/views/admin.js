@@ -168,6 +168,10 @@ function userCardHtml(user) {
         <div class="admin-meta">
           ${user.suspended ? "Suspended" : "Active"} · ${user.friend_count} friends · ${user.woods_sent}/${user.woods_received} Woods · ${user.achievements_earned || 0} achievements · 🔥 ${user.current_longest_streak}
         </div>
+        <div class="admin-status-row">
+          ${userInstallChipHtml(user)}
+          ${userPushChipHtml(user)}
+        </div>
       </div>
       <div class="achievement-award">
         <select class="field-input" data-achievement-select="${user.id}" aria-label="Achievement">
@@ -177,13 +181,61 @@ function userCardHtml(user) {
         </select>
         <button class="chip-btn" data-award-achievement="${user.id}">Award</button>
       </div>
+      ${passwordResetLinkHtml(user)}
       <div class="admin-actions">
         <button class="chip-btn accent" data-user="${user.id}" data-admin-action="test-push">Push</button>
+        <button class="chip-btn" data-password-reset="${user.id}" data-reset-name="${escHtml(user.username)}">Reset link</button>
         <button class="chip-btn danger-chip" data-reset-achievements="${user.id}" data-reset-name="${escHtml(user.username)}" ${user.achievements_earned ? "" : "disabled"}>Reset achievements</button>
         <button class="chip-btn" data-user="${user.id}" data-admin-action="${user.suspended ? "unsuspend" : "suspend"}">${user.suspended ? "Unsuspend" : "Suspend"}</button>
         <button class="chip-btn" data-user="${user.id}" data-admin-action="${user.role === "admin" ? "demote" : "promote"}">${user.role === "admin" ? "Demote" : "Promote"}</button>
       </div>
     </div>
+  `;
+}
+
+function passwordResetLinkHtml(user) {
+  const reset = state.passwordResetLink;
+  if (!reset || reset.userId !== user.id) return "";
+  return `
+    <div class="reset-link-box">
+      <div>
+        <strong>Password reset link</strong>
+        <span>Expires ${formatDate(reset.expiresAt)}</span>
+      </div>
+      <button class="chip-btn accent" data-copy-reset-link="${escHtml(reset.link)}">Copy</button>
+      <input class="reset-link-input" value="${escHtml(reset.link)}" readonly aria-label="Password reset link" />
+    </div>
+  `;
+}
+
+function userInstallChipHtml(user) {
+  const installed = Boolean(user.pwa_installed);
+  const label = installed ? "PWA seen" : "No PWA yet";
+  const detail = installed
+    ? `Last opened ${formatDate(user.pwa_last_seen_at || user.pwa_installed_at)}`
+    : "No standalone launch seen";
+  const mode = user.pwa_display_mode && user.pwa_display_mode !== "unknown"
+    ? ` · ${user.pwa_display_mode}`
+    : "";
+  return `
+    <span class="status-chip ${installed ? "ok" : ""}" title="${escHtml(detail)}${escHtml(mode)}">
+      <span class="status-dot"></span>
+      ${label}
+    </span>
+  `;
+}
+
+function userPushChipHtml(user) {
+  const count = Number(user.push_subscription_count || 0);
+  const label = count ? `Push ${count}` : "No push";
+  const detail = count
+    ? `${count} push subscription${count === 1 ? "" : "s"} saved`
+    : "No push subscription saved";
+  return `
+    <span class="status-chip ${count ? "ok" : ""}" title="${escHtml(detail)}">
+      <span class="status-dot"></span>
+      ${label}
+    </span>
   `;
 }
 
@@ -343,6 +395,30 @@ function bindAdmin(ctx) {
         body: { slug: select?.value },
       });
       await loadApp();
+      renderAdmin(ctx);
+    });
+  });
+  document.querySelectorAll("[data-password-reset]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const userId = btn.dataset.passwordReset;
+      const name = btn.dataset.resetName || "user";
+      const response = await api(`/api/admin/users/${userId}/password-reset`, { method: "POST" });
+      state.admin = response.admin;
+      state.passwordResetLink = {
+        userId,
+        username: name,
+        link: response.link,
+        expiresAt: response.expires_at,
+      };
+      await copyText(response.link);
+      state.error = `Reset link copied for ${name}`;
+      renderAdmin(ctx);
+    });
+  });
+  document.querySelectorAll("[data-copy-reset-link]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await copyText(btn.dataset.copyResetLink);
+      state.error = "Reset link copied";
       renderAdmin(ctx);
     });
   });

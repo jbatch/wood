@@ -8,3 +8,7 @@ export function id(prefix = "") {
 export function inviteCode() {
   return crypto.randomBytes(18).toString("base64url");
 }
+
+export function resetToken() {
+  return crypto.randomBytes(32).toString("base64url");
+}

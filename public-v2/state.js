@@ -4,6 +4,7 @@ export const state = {
   error: "",
   pushStatus: null,
   admin: null,
+  passwordResetLink: null,
   debug: null,
   pollTimer: null,
   polling: false,

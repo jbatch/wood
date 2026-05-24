@@ -2,9 +2,15 @@ import { state } from "../state.js";
 import { escHtml, humanErr } from "../utils.js";
 
 export function renderAuth(ctx) {
-  const { app, api, loadApp, render, startPolling, startRealtime } = ctx;
+  const { app, api, loadApp, render, reportClientStatus, startPolling, startRealtime } = ctx;
   const params = new URLSearchParams(location.search);
   const invite = params.get("invite") || "";
+  const resetToken = params.get("token") || "";
+
+  if (location.pathname === "/reset-password") {
+    renderPasswordReset(ctx, resetToken);
+    return;
+  }
 
   app.innerHTML = `
     <div class="auth-screen">
@@ -43,6 +49,48 @@ export function renderAuth(ctx) {
     try {
       const resp = await api(invite ? "/api/signup" : "/api/login", { method: "POST", body: payload });
       state.session = { user: resp.user, push: state.session?.push || {} };
+      reportClientStatus();
+      history.replaceState(null, "", "/");
+      await loadApp();
+      startPolling();
+      startRealtime();
+      render();
+    } catch (err) {
+      document.querySelector("#auth-error").textContent = humanErr(err.message);
+    }
+  });
+}
+
+function renderPasswordReset(ctx, token) {
+  const { app, api, loadApp, render, reportClientStatus, startPolling, startRealtime } = ctx;
+
+  app.innerHTML = `
+    <div class="auth-screen">
+      <div class="auth-logo">🪵</div>
+      <div class="auth-title">Reset Wood</div>
+      <div class="auth-sub">Pick a new password. Very official.</div>
+      <form class="auth-card" id="reset-form">
+        <div class="sheet-field">
+          <div class="field-label">New password</div>
+          <input class="field-input" name="password" type="password" autocomplete="new-password" required minlength="8" placeholder="••••••••" />
+        </div>
+        <div class="auth-error" id="auth-error">${token ? "" : "Missing reset link"}</div>
+        <button class="btn-primary" type="submit" ${token ? "" : "disabled"}>Reset password</button>
+      </form>
+    </div>
+  `;
+
+  document.querySelector("#reset-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const payload = Object.fromEntries(new FormData(e.currentTarget).entries());
+    document.querySelector("#auth-error").textContent = "";
+    try {
+      const resp = await api("/api/password-resets/complete", {
+        method: "POST",
+        body: { token, password: payload.password },
+      });
+      state.session = { user: resp.user, push: state.session?.push || {} };
+      reportClientStatus();
       history.replaceState(null, "", "/");
       await loadApp();
       startPolling();

@@ -15,6 +15,7 @@ const APP_POLL_INTERVAL_MS = 60000;
 let toastTimer = null;
 let pollingEventsBound = false;
 let lastReturnRefreshAt = 0;
+let pendingInstallReport = false;
 
 const ctx = {
   app,
@@ -30,6 +31,7 @@ const ctx = {
   refreshPushStatus,
   render,
   renderHome: () => renderHome(ctx),
+  reportClientStatus,
   saveAdminTab,
   saveHomeTab,
   showToast,
@@ -47,12 +49,42 @@ async function init() {
   }
   state.session = await api("/api/session");
   if (state.session.user) {
+    reportClientStatus();
     restoreTabs();
     await loadApp();
     startPolling();
     startRealtime();
   }
   render();
+}
+
+window.addEventListener("appinstalled", () => {
+  pendingInstallReport = true;
+  reportClientStatus({ installed: true, source: "appinstalled" });
+});
+
+function reportClientStatus(extra = {}) {
+  if (!state.session?.user) return;
+  const displayMode = currentDisplayMode();
+  const installed = Boolean(extra.installed || pendingInstallReport || displayMode !== "browser");
+  api("/api/client-status", {
+    method: "POST",
+    body: {
+      displayMode,
+      installed,
+      source: extra.source || "startup",
+    },
+  })
+    .then(() => {
+      if (installed) pendingInstallReport = false;
+    })
+    .catch(() => {});
+}
+
+function currentDisplayMode() {
+  if (window.navigator.standalone) return "standalone";
+  const modes = ["window-controls-overlay", "fullscreen", "standalone", "minimal-ui"];
+  return modes.find((mode) => window.matchMedia?.(`(display-mode: ${mode})`)?.matches) || "browser";
 }
 
 async function loadApp() {
@@ -66,6 +98,10 @@ async function loadApp() {
 }
 
 function render() {
+  if (location.pathname === "/reset-password") {
+    renderAuth(ctx);
+    return;
+  }
   if (!state.session?.user) {
     renderAuth(ctx);
     return;
@@ -107,6 +143,7 @@ async function logout() {
   state.data = null;
   state.view = "home";
   state.admin = null;
+  state.passwordResetLink = null;
   state.debug = null;
   state.profileUserId = null;
   state.profileData = null;

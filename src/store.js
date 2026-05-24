@@ -77,6 +77,9 @@ function migrate(sqlite) {
       birthday_day INTEGER,
       birthday_visible INTEGER NOT NULL DEFAULT 0,
       notification_snoozed_until TEXT,
+      pwa_installed_at TEXT,
+      pwa_last_seen_at TEXT,
+      pwa_display_mode TEXT,
       created_at TEXT NOT NULL,
       last_active_at TEXT,
       deleted_at TEXT
@@ -105,6 +108,18 @@ function migrate(sqlite) {
       created_at TEXT NOT NULL,
       FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
       FOREIGN KEY (used_by) REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS password_resets (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      created_by TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
     );
 
     CREATE TABLE IF NOT EXISTS friendships (
@@ -233,6 +248,9 @@ function migrate(sqlite) {
   ensureColumn(sqlite, "users", "birthday_day", "INTEGER");
   ensureColumn(sqlite, "users", "birthday_visible", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(sqlite, "users", "notification_snoozed_until", "TEXT");
+  ensureColumn(sqlite, "users", "pwa_installed_at", "TEXT");
+  ensureColumn(sqlite, "users", "pwa_last_seen_at", "TEXT");
+  ensureColumn(sqlite, "users", "pwa_display_mode", "TEXT");
   ensureColumn(sqlite, "invites", "reusable", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(sqlite, "woods", "hold_duration_ms", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(sqlite, "woods", "streak_count_after", "INTEGER");
@@ -270,6 +288,9 @@ async function seedFirstAdmin(store) {
       birthday_day: null,
       birthday_visible: false,
       notification_snoozed_until: null,
+      pwa_installed_at: null,
+      pwa_last_seen_at: null,
+      pwa_display_mode: null,
       created_at: nowIso(),
       last_active_at: null,
       deleted_at: null,
@@ -295,6 +316,7 @@ function loadSnapshot(sqlite) {
     users: sqlite.prepare("SELECT * FROM users ORDER BY created_at, id").all(),
     push_subs: sqlite.prepare("SELECT * FROM push_subs ORDER BY created_at, id").all(),
     invites: sqlite.prepare("SELECT * FROM invites ORDER BY created_at, id").all(),
+    password_resets: sqlite.prepare("SELECT * FROM password_resets ORDER BY created_at, id").all(),
     friendships: sqlite.prepare("SELECT * FROM friendships ORDER BY created_at, id").all(),
     woods: sqlite.prepare("SELECT * FROM woods ORDER BY sent_at, id").all(),
     mutes: sqlite.prepare("SELECT * FROM mutes ORDER BY id").all(),
@@ -318,6 +340,9 @@ function normalizeDb(db) {
       birthday_day: user.birthday_day ?? null,
       birthday_visible: Boolean(user.birthday_visible),
       notification_snoozed_until: user.notification_snoozed_until || null,
+      pwa_installed_at: user.pwa_installed_at || null,
+      pwa_last_seen_at: user.pwa_last_seen_at || null,
+      pwa_display_mode: user.pwa_display_mode || null,
       deleted_at: user.deleted_at || null,
     })),
     push_subs: db.push_subs || [],
@@ -325,6 +350,7 @@ function normalizeDb(db) {
       ...invite,
       reusable: Boolean(invite.reusable),
     })),
+    password_resets: db.password_resets || [],
     friendships: db.friendships || [],
     woods: (db.woods || []).map((wood) => ({
       ...wood,
@@ -377,6 +403,7 @@ function persistSnapshot(sqlite, db) {
       DELETE FROM friendships;
       DELETE FROM push_subs;
       DELETE FROM invites;
+      DELETE FROM password_resets;
       DELETE FROM users;
       DELETE FROM app_config;
     `);
@@ -386,12 +413,14 @@ function persistSnapshot(sqlite, db) {
         (
           id, username, email, password_hash, role, suspended, favourite_wood,
           birthday_month, birthday_day, birthday_visible, notification_snoozed_until,
+          pwa_installed_at, pwa_last_seen_at, pwa_display_mode,
           created_at, last_active_at, deleted_at
         )
       VALUES
         (
           @id, @username, @email, @password_hash, @role, @suspended, @favourite_wood,
           @birthday_month, @birthday_day, @birthday_visible, @notification_snoozed_until,
+          @pwa_installed_at, @pwa_last_seen_at, @pwa_display_mode,
           @created_at, @last_active_at, @deleted_at
         )
     `);
@@ -401,6 +430,9 @@ function persistSnapshot(sqlite, db) {
         suspended: user.suspended ? 1 : 0,
         birthday_visible: user.birthday_visible ? 1 : 0,
         notification_snoozed_until: user.notification_snoozed_until || null,
+        pwa_installed_at: user.pwa_installed_at || null,
+        pwa_last_seen_at: user.pwa_last_seen_at || null,
+        pwa_display_mode: user.pwa_display_mode || null,
         deleted_at: user.deleted_at || null,
       });
     }
@@ -415,6 +447,20 @@ function persistSnapshot(sqlite, db) {
       insertInvite.run({
         ...invite,
         reusable: invite.reusable ? 1 : 0,
+      });
+    }
+
+    const insertPasswordReset = sqlite.prepare(`
+      INSERT INTO password_resets
+        (id, user_id, token_hash, expires_at, used_at, created_by, created_at)
+      VALUES
+        (@id, @user_id, @token_hash, @expires_at, @used_at, @created_by, @created_at)
+    `);
+    for (const reset of snapshot.password_resets) {
+      insertPasswordReset.run({
+        ...reset,
+        used_at: reset.used_at || null,
+        created_by: reset.created_by || null,
       });
     }
 

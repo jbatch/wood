@@ -23,6 +23,13 @@ export async function verifyPassword(password, hash) {
   );
 }
 
+export function hashToken(token) {
+  return crypto
+    .createHash("sha256")
+    .update(String(token || ""))
+    .digest("base64url");
+}
+
 function scrypt(password, salt) {
   return new Promise((resolve, reject) => {
     crypto.scrypt(password, salt, 64, { N: 16384, r: 8, p: 1 }, (err, key) => {
