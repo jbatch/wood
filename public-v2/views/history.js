@@ -178,6 +178,8 @@ async function sendHistoryWood(ctx, options = {}) {
 function bindWoodKey(ctx) {
   const key = document.querySelector("#wood-key");
   if (!key) return;
+  key.addEventListener("contextmenu", (event) => event.preventDefault());
+  key.addEventListener("selectstart", (event) => event.preventDefault());
   key.addEventListener("pointerdown", (event) => startLongHold(ctx, key, event));
   key.addEventListener("pointerup", (event) => finishLongHold(ctx, key, event));
   key.addEventListener("pointercancel", () => cancelLongHold(ctx, key));
@@ -208,7 +210,7 @@ function tickLongHold(ctx) {
   const progress = Math.min(1, elapsed / LONG_HOLD_MAX_MS);
   longHold.armed = elapsed >= LONG_HOLD_ARM_MS;
   longHold.failed = elapsed >= LONG_HOLD_FAIL_MS;
-  longHold.key.classList.toggle("charging", longHold.armed && !longHold.failed);
+  longHold.key.classList.toggle("charging", elapsed >= LONG_HOLD_MIN_MS && !longHold.failed);
   longHold.key.classList.toggle("failed", longHold.failed);
   longHold.key.style.setProperty("--long-progress", String(progress));
   updateLongHoldCopy(longHold.key, elapsed);
@@ -221,17 +223,13 @@ function updateLongHoldCopy(key, elapsed) {
   const stage = key.querySelector(".long-stage");
   if (!title || !subtitle || !stage) return;
   const label = longHoldLabel(elapsed);
-  if (elapsed < LONG_HOLD_ARM_MS) {
+  if (elapsed < LONG_HOLD_MIN_MS) {
     title.textContent = "Send Wood";
-    subtitle.textContent = "Keep holding to power up a Long Wood.";
-    stage.textContent = "Tap release sends regular Wood";
-  } else if (elapsed < LONG_HOLD_MIN_MS) {
-    title.textContent = "Powering up...";
-    subtitle.textContent = "Release now to cancel the ritual.";
-    stage.textContent = "Not long enough";
+    subtitle.textContent = "Tap to send";
+    stage.textContent = "";
   } else if (elapsed < LONG_HOLD_FAIL_MS) {
     title.textContent = label;
-    subtitle.textContent = "Release to send. Do not overdo it.";
+    subtitle.textContent = "Release to send.";
     stage.textContent = `${Math.round(Math.min(100, elapsed / LONG_HOLD_MAX_MS * 100))}% charged`;
   } else {
     title.textContent = "Too much Wood";
