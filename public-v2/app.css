@@ -1378,6 +1378,25 @@ html, body {
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-bottom: calc(96px + var(--safe-bottom));
+  scrollbar-color: rgba(224, 237, 227, 0.18) transparent;
+  scrollbar-width: thin;
+}
+
+.scroll-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scroll-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scroll-content::-webkit-scrollbar-thumb {
+  background: rgba(224, 237, 227, 0.14);
+  border-radius: var(--radius-pill);
+}
+
+.scroll-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(224, 237, 227, 0.24);
 }
 
 .profile-scroll {
