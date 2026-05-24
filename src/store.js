@@ -122,6 +122,22 @@ function migrate(sqlite) {
       FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
     );
 
+    CREATE TABLE IF NOT EXISTS notifications (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      url TEXT,
+      actor_id TEXT,
+      data_json TEXT,
+      dedupe_key TEXT UNIQUE,
+      read_at TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (actor_id) REFERENCES users(id) ON DELETE SET NULL
+    );
+
     CREATE TABLE IF NOT EXISTS friendships (
       id TEXT PRIMARY KEY,
       requester_id TEXT NOT NULL,
@@ -240,6 +256,8 @@ function migrate(sqlite) {
       ON friendships(requester_id, addressee_id, status);
     CREATE INDEX IF NOT EXISTS idx_group_woods_sent_at
       ON group_woods(group_id, sender_id, sent_at);
+    CREATE INDEX IF NOT EXISTS idx_notifications_user_created
+      ON notifications(user_id, created_at DESC);
   `);
 
   ensureColumn(sqlite, "users", "deleted_at", "TEXT");
@@ -317,6 +335,7 @@ function loadSnapshot(sqlite) {
     push_subs: sqlite.prepare("SELECT * FROM push_subs ORDER BY created_at, id").all(),
     invites: sqlite.prepare("SELECT * FROM invites ORDER BY created_at, id").all(),
     password_resets: sqlite.prepare("SELECT * FROM password_resets ORDER BY created_at, id").all(),
+    notifications: sqlite.prepare("SELECT * FROM notifications ORDER BY created_at, id").all(),
     friendships: sqlite.prepare("SELECT * FROM friendships ORDER BY created_at, id").all(),
     woods: sqlite.prepare("SELECT * FROM woods ORDER BY sent_at, id").all(),
     mutes: sqlite.prepare("SELECT * FROM mutes ORDER BY id").all(),
@@ -351,6 +370,14 @@ function normalizeDb(db) {
       reusable: Boolean(invite.reusable),
     })),
     password_resets: db.password_resets || [],
+    notifications: (db.notifications || []).map((notification) => ({
+      ...notification,
+      url: notification.url || "",
+      actor_id: notification.actor_id || null,
+      data_json: notification.data_json || "{}",
+      dedupe_key: notification.dedupe_key || null,
+      read_at: notification.read_at || null,
+    })),
     friendships: db.friendships || [],
     woods: (db.woods || []).map((wood) => ({
       ...wood,
@@ -404,6 +431,7 @@ function persistSnapshot(sqlite, db) {
       DELETE FROM push_subs;
       DELETE FROM invites;
       DELETE FROM password_resets;
+      DELETE FROM notifications;
       DELETE FROM users;
       DELETE FROM app_config;
     `);
@@ -461,6 +489,29 @@ function persistSnapshot(sqlite, db) {
         ...reset,
         used_at: reset.used_at || null,
         created_by: reset.created_by || null,
+      });
+    }
+
+    const insertNotification = sqlite.prepare(`
+      INSERT INTO notifications
+        (
+          id, user_id, type, title, body, url, actor_id, data_json,
+          dedupe_key, read_at, created_at
+        )
+      VALUES
+        (
+          @id, @user_id, @type, @title, @body, @url, @actor_id, @data_json,
+          @dedupe_key, @read_at, @created_at
+        )
+    `);
+    for (const notification of snapshot.notifications) {
+      insertNotification.run({
+        ...notification,
+        url: notification.url || null,
+        actor_id: notification.actor_id || null,
+        data_json: notification.data_json || "{}",
+        dedupe_key: notification.dedupe_key || null,
+        read_at: notification.read_at || null,
       });
     }
 

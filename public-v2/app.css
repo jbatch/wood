@@ -272,6 +272,167 @@ html, body {
   color: var(--text);
 }
 
+.mailbox-btn {
+  position: relative;
+}
+
+.mailbox-icon {
+  font-size: 15px;
+  transform: rotate(45deg);
+}
+
+.mailbox-badge {
+  position: absolute;
+  right: -3px;
+  top: -5px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: #0a1a0d;
+  border: 2px solid var(--bg);
+  font-size: 10px;
+  font-weight: 950;
+  line-height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.notification-sheet {
+  max-height: min(78svh, 620px);
+}
+
+.notification-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.notification-sheet-head p {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.notification-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-color: rgba(224, 237, 227, 0.28) transparent;
+  scrollbar-width: thin;
+}
+
+.notification-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.notification-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.notification-list::-webkit-scrollbar-thumb {
+  background: rgba(224, 237, 227, 0.22);
+  border-radius: var(--radius-pill);
+}
+
+.notification-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(224, 237, 227, 0.32);
+}
+
+.notification-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  padding: 11px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.notification-row.unread {
+  border-color: rgba(62, 214, 105, 0.28);
+  background: rgba(62, 214, 105, 0.08);
+}
+
+.notification-row.fresh {
+  border-color: rgba(62, 214, 105, 0.42);
+  background: rgba(62, 214, 105, 0.14);
+}
+
+.notification-row:active {
+  transform: scale(0.99);
+}
+
+.notification-type-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  margin-top: 4px;
+  background: var(--text-faint);
+}
+
+.notification-row.unread .notification-type-dot {
+  background: var(--accent);
+}
+
+.notification-row.fresh .notification-type-dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 4px rgba(62, 214, 105, 0.1);
+}
+
+.notification-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.notification-copy strong {
+  font-size: 13px;
+  font-weight: 850;
+  color: var(--text);
+}
+
+.notification-copy span,
+.notification-copy small {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.notification-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+  text-align: center;
+  padding: 28px 10px;
+  color: var(--text-muted);
+}
+
+.notification-empty strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.notification-empty span {
+  font-size: 12px;
+  font-weight: 700;
+}
+
 /* ─── Stats strip ───────────────────────────────────────── */
 
 .stats-bar {
@@ -320,6 +481,34 @@ html, body {
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--text-faint);
+}
+
+.section-head.with-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.section-add-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(62, 214, 105, 0.24);
+  background: var(--accent-dim);
+  color: var(--accent);
+  font: inherit;
+  font-size: 17px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 120ms ease, background 120ms ease;
+}
+
+.section-add-btn:active {
+  transform: scale(0.94);
+  background: rgba(62, 214, 105, 0.16);
 }
 
 /* ─── Friend list ───────────────────────────────────────── */
@@ -711,7 +900,7 @@ html, body {
 }
 
 .sheet-overlay {
-  position: fixed;
+  position: absolute;
   inset: 0;
   background: rgba(0, 0, 0, 0.6);
   z-index: 30;
@@ -1296,6 +1485,10 @@ html, body {
   color: var(--accent);
   font-size: 13px;
   font-weight: 800;
+}
+
+.settings-notice {
+  margin: -4px 16px 16px;
 }
 
 .btn-primary:disabled {

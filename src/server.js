@@ -74,6 +74,8 @@ const store = await createStore();
 const realtimeClients = new Map();
 let realtimeEventId = 0;
 const REALTIME_HEARTBEAT_MS = 25000;
+const NOTIFICATION_HISTORY_LIMIT = 100;
+const NOTIFICATION_BACKFILL_DAYS = 30;
 const PWA_DISPLAY_MODES = new Set([
   "browser",
   "standalone",
@@ -121,6 +123,8 @@ const FAVOURITE_WOODS = [
   "yggdrasil",
 ];
 const FOREVER_SNOOZE_UNTIL = "9999-12-31T23:59:59.000Z";
+
+await backfillNotificationsIfNeeded();
 
 const requestListener = async (req, res) => {
   try {
@@ -267,6 +271,17 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/notifications") {
+    sendJson(res, 200, notificationState(user.id));
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/notifications/read-all") {
+    await markNotificationsRead(user.id);
+    sendJson(res, 200, notificationState(user.id));
+    return;
+  }
+
   if (req.method === "PATCH" && url.pathname === "/api/profile") {
     await updateProfile(user, res, body);
     return;
@@ -274,6 +289,11 @@ async function handleApi(req, res, url) {
 
   if (req.method === "PATCH" && url.pathname === "/api/settings") {
     await updateSettings(user, res, body);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/password") {
+    await updatePassword(user, res, body);
     return;
   }
 
@@ -633,8 +653,57 @@ function appState(user) {
     config: {
       cooldown_hours: db.config.cooldown_hours,
     },
+    notifications: {
+      unread_count: unreadNotificationCount(db, user.id),
+    },
     push: pushPublicConfig(),
   };
+}
+
+function notificationState(userId) {
+  return {
+    unread_count: unreadNotificationCount(store.db, userId),
+    notifications: visibleNotifications(store.db, userId),
+  };
+}
+
+function visibleNotifications(db, userId) {
+  return db.notifications
+    .filter((notification) => notification.user_id === userId)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id))
+    .slice(0, NOTIFICATION_HISTORY_LIMIT)
+    .map(publicNotification);
+}
+
+function publicNotification(notification) {
+  return {
+    id: notification.id,
+    type: notification.type,
+    title: notification.title,
+    body: notification.body,
+    url: notification.url || "",
+    actor_id: notification.actor_id || null,
+    data: safeJson(notification.data_json, {}),
+    read_at: notification.read_at || null,
+    created_at: notification.created_at,
+  };
+}
+
+function unreadNotificationCount(db, userId) {
+  return db.notifications.filter(
+    (notification) => notification.user_id === userId && !notification.read_at,
+  ).length;
+}
+
+async function markNotificationsRead(userId) {
+  const readAt = nowIso();
+  await store.write((db) => {
+    for (const notification of db.notifications) {
+      if (notification.user_id === userId && !notification.read_at) {
+        notification.read_at = readAt;
+      }
+    }
+  });
 }
 
 async function getProfile(user, res, profileUserId) {
@@ -737,6 +806,28 @@ async function updateSettings(user, res, body) {
     if (fresh) fresh.notification_snoozed_until = snoozedUntil;
   });
   emitUserEvent(user.id, "app.changed", { reason: "settings.updated" });
+  sendJson(res, 200, appState(currentUserFromId(user.id)));
+}
+
+async function updatePassword(user, res, body) {
+  const currentPassword = String(body.currentPassword || "");
+  const nextPassword = String(body.newPassword || "");
+  if (nextPassword.length < 8) {
+    sendJson(res, 400, { error: "weak_password" });
+    return;
+  }
+  if (!(await verifyPassword(currentPassword, user.password_hash))) {
+    sendJson(res, 401, { error: "invalid_current_password" });
+    return;
+  }
+
+  await store.write(async (db) => {
+    const fresh = db.users.find((candidate) => candidate.id === user.id);
+    if (!fresh) return;
+    fresh.password_hash = await hashPassword(nextPassword);
+    fresh.last_active_at = nowIso();
+  });
+  emitUserEvent(user.id, "app.changed", { reason: "password.updated" });
   sendJson(res, 200, appState(currentUserFromId(user.id)));
 }
 
@@ -844,6 +935,16 @@ async function createGroup(user, res, body) {
   });
 
   for (const memberId of memberState.memberIds) {
+    await createNotification({
+      user_id: memberId,
+      type: "group.invite",
+      title: `You were invited to ${group.name}`,
+      body: `${user.username} is assembling Wood.`,
+      url: "/?tab=groups",
+      actor_id: user.id,
+      data: { groupId: group.id, invitedBy: user.id },
+      dedupe_key: `group_invite:${group.id}:${memberId}`,
+    });
     await notifyAndPrune(memberId, groupInviteNotification(user, group), {
       event: "group.invite.created",
       groupId: group.id,
@@ -881,6 +982,16 @@ async function respondToGroupInvite(user, res, membershipId, action) {
     return;
   }
   if (action === "accept" && result.membership.invited_by) {
+    await createNotification({
+      user_id: result.membership.invited_by,
+      type: "group.invite.accepted",
+      title: `${user.username} joined ${result.group?.name || "your group"}`,
+      body: "The room has more Wood now.",
+      url: `/?tab=groups&group=${encodeURIComponent(result.membership.group_id)}`,
+      actor_id: user.id,
+      data: { groupId: result.membership.group_id, memberId: user.id },
+      dedupe_key: `group_invite_accept:${result.membership.id}`,
+    });
     await notifyAndPrune(
       result.membership.invited_by,
       groupInviteAcceptedNotification(user, result.group),
@@ -942,6 +1053,16 @@ async function requestFriend(user, res, body) {
     friendshipId: result.friendship.id,
     requesterId: user.id,
   });
+  await createNotification({
+    user_id: result.recipient.id,
+    type: "friend.request",
+    title: `${user.username} wants to trade Wood`,
+    body: "Friend request waiting.",
+    url: "/?tab=friends",
+    actor_id: user.id,
+    data: { friendshipId: result.friendship.id, requesterId: user.id },
+    dedupe_key: `friend_request:${result.friendship.id}`,
+  });
   emitUsersEvent([user.id, result.recipient.id], "friend_request.created", {
     friendshipId: result.friendship.id,
     requesterId: user.id,
@@ -972,6 +1093,16 @@ async function respondToFriendRequest(user, res, friendshipId, action) {
   }
   if (achievementUsers.length) {
     await evaluateAndNotifyAchievements(achievementUsers);
+    await createNotification({
+      user_id: result.friendship.requester_id,
+      type: "friend.accepted",
+      title: `${user.username} accepted your Wood request`,
+      body: "A new Wood route has opened.",
+      url: `/?friend=${encodeURIComponent(user.id)}`,
+      actor_id: user.id,
+      data: { friendshipId: result.friendship.id, friendId: user.id },
+      dedupe_key: `friend_accept:${result.friendship.id}`,
+    });
     await notifyAndPrune(
       result.friendship.requester_id,
       friendRequestAcceptedNotification(user),
@@ -1119,6 +1250,19 @@ async function sendWood(user, res, recipientId, body) {
     milestone: streakResult.milestone,
   });
 
+  await createNotification({
+    user_id: recipientId,
+    type: "wood.dm",
+    title: `${user.username} sent you ${variant.label}`,
+    body: streakResult.incremented
+      ? `Wood streak: ${streakResult.streak.current_streak}`
+      : "Direct Wood received.",
+    url: `/?friend=${encodeURIComponent(user.id)}`,
+    actor_id: user.id,
+    data: { friendId: user.id, woodId: wood.id, type: wood.type },
+    dedupe_key: `wood:${wood.id}:${recipientId}`,
+  });
+
   if (!muted) {
     const notification = woodNotification({
       sender: user.username,
@@ -1229,6 +1373,16 @@ async function sendGroupWood(user, res, groupId, body) {
     .map((member) => member.user_id)
     .filter((memberId) => memberId !== user.id);
   for (const recipientId of recipients) {
+    await createNotification({
+      user_id: recipientId,
+      type: "wood.group",
+      title: `${user.username} sent ${variant.label} to ${group.name}`,
+      body: "Group Wood received.",
+      url: `/?tab=groups&group=${encodeURIComponent(groupId)}`,
+      actor_id: user.id,
+      data: { groupId, woodId: wood.id },
+      dedupe_key: `group_wood:${wood.id}:${recipientId}`,
+    });
     await notifyAndPrune(recipientId, {
       title: notification.title,
       body: notification.body,
@@ -1343,6 +1497,16 @@ async function notifyAchievements(userId, achievements) {
   const user = store.db.users.find((candidate) => candidate.id === userId);
   if (!user) return;
   for (const achievement of achievements) {
+    await createNotification({
+      user_id: userId,
+      type: "achievement.unlocked",
+      title: `Achievement unlocked: ${achievement.name}`,
+      body: achievement.description,
+      url: "/?tab=stats",
+      data: { achievement: achievement.slug },
+      dedupe_key: `achievement:${userId}:${achievement.slug}`,
+      created_at: achievement.earned_at || nowIso(),
+    });
     const result = await notifyAndPrune(userId, {
       title: "Achievement unlocked",
       body: `${achievement.name}: ${achievement.description}`,
@@ -1363,6 +1527,181 @@ async function notifyAchievements(userId, achievements) {
       achievement: achievement.slug,
     });
   }
+}
+
+function addNotification(db, options) {
+  if (!options.user_id || !options.type || !options.title) return null;
+  if (options.dedupe_key && db.notifications.some(
+    (notification) => notification.dedupe_key === options.dedupe_key,
+  )) {
+    return null;
+  }
+  const notification = {
+    id: id("notification"),
+    user_id: options.user_id,
+    type: options.type,
+    title: options.title,
+    body: options.body || "",
+    url: options.url || "",
+    actor_id: options.actor_id || null,
+    data_json: JSON.stringify(options.data || {}),
+    dedupe_key: options.dedupe_key || null,
+    read_at: options.read_at || null,
+    created_at: options.created_at || nowIso(),
+  };
+  db.notifications.push(notification);
+  pruneNotificationsForUser(db, options.user_id);
+  return notification;
+}
+
+function pruneNotificationsForUser(db, userId) {
+  const userNotifications = db.notifications
+    .filter((notification) => notification.user_id === userId)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
+  const keep = new Set(
+    userNotifications.slice(0, NOTIFICATION_HISTORY_LIMIT).map((notification) => notification.id),
+  );
+  // TODO: Add periodic stale notification cleanup once this grows beyond per-user pruning.
+  db.notifications = db.notifications.filter(
+    (notification) => notification.user_id !== userId || keep.has(notification.id),
+  );
+}
+
+async function createNotification(options) {
+  const notification = await store.write((db) => addNotification(db, options));
+  if (notification && !notification.read_at) {
+    emitUserEvent(notification.user_id, "notifications.changed", {
+      notificationId: notification.id,
+      type: notification.type,
+    });
+  }
+  return notification;
+}
+
+async function backfillNotificationsIfNeeded() {
+  // TODO: Remove the one-time notification backfill after it has run in production.
+  if (store.db.config.notification_backfilled_at) return;
+  const backfilledAt = nowIso();
+  const cutoffMs = Date.now() - NOTIFICATION_BACKFILL_DAYS * 24 * 60 * 60 * 1000;
+  const created = await store.write((db) => {
+    let count = 0;
+    const users = new Map(db.users.map((user) => [user.id, user]));
+    const groups = new Map(db.groups.map((group) => [group.id, group]));
+    const achievements = new Map(db.achievements_def.map((achievement) => [achievement.id, achievement]));
+
+    for (const wood of db.woods) {
+      if (Date.parse(wood.sent_at) < cutoffMs) continue;
+      const sender = users.get(wood.sender_id);
+      if (!sender || !users.has(wood.recipient_id)) continue;
+      const notification = addNotification(db, {
+        user_id: wood.recipient_id,
+        type: "wood.dm",
+        title: `${sender.username} sent you ${wood.label || "Wood"}`,
+        body: "Recent Wood history, now with a mailbox.",
+        url: `/?friend=${encodeURIComponent(sender.id)}`,
+        actor_id: sender.id,
+        data: { friendId: sender.id, woodId: wood.id },
+        dedupe_key: `backfill:wood:${wood.id}:${wood.recipient_id}`,
+        read_at: backfilledAt,
+        created_at: wood.sent_at,
+      });
+      if (notification) count += 1;
+    }
+
+    for (const wood of db.group_woods) {
+      if (Date.parse(wood.sent_at) < cutoffMs) continue;
+      const sender = users.get(wood.sender_id);
+      const group = groups.get(wood.group_id);
+      if (!sender || !group) continue;
+      const recipients = db.group_members
+        .filter(
+          (member) =>
+            member.group_id === wood.group_id &&
+            member.status === "accepted" &&
+            member.user_id !== wood.sender_id,
+        )
+        .map((member) => member.user_id);
+      for (const recipientId of recipients) {
+        const notification = addNotification(db, {
+          user_id: recipientId,
+          type: "wood.group",
+          title: `${sender.username} sent ${wood.label || "Wood"} to ${group.name}`,
+          body: "Group Wood history, now neatly stacked.",
+          url: `/?tab=groups&group=${encodeURIComponent(group.id)}`,
+          actor_id: sender.id,
+          data: { groupId: group.id, woodId: wood.id },
+          dedupe_key: `backfill:group_wood:${wood.id}:${recipientId}`,
+          read_at: backfilledAt,
+          created_at: wood.sent_at,
+        });
+        if (notification) count += 1;
+      }
+    }
+
+    for (const friendship of db.friendships) {
+      if (friendship.status !== "pending") continue;
+      const requester = users.get(friendship.requester_id);
+      if (!requester || !users.has(friendship.addressee_id)) continue;
+      const notification = addNotification(db, {
+        user_id: friendship.addressee_id,
+        type: "friend.request",
+        title: `${requester.username} wants to trade Wood`,
+        body: "Friend request waiting.",
+        url: "/?tab=friends",
+        actor_id: requester.id,
+        data: { friendshipId: friendship.id, requesterId: requester.id },
+        dedupe_key: `backfill:friend_request:${friendship.id}`,
+        read_at: null,
+        created_at: friendship.created_at,
+      });
+      if (notification) count += 1;
+    }
+
+    for (const member of db.group_members) {
+      if (member.status !== "pending") continue;
+      const inviter = users.get(member.invited_by);
+      const group = groups.get(member.group_id);
+      if (!group || !users.has(member.user_id)) continue;
+      const notification = addNotification(db, {
+        user_id: member.user_id,
+        type: "group.invite",
+        title: `You were invited to ${group.name}`,
+        body: inviter ? `${inviter.username} is assembling Wood.` : "Group invite waiting.",
+        url: "/?tab=groups",
+        actor_id: inviter?.id || null,
+        data: { groupId: group.id, membershipId: member.id },
+        dedupe_key: `backfill:group_invite:${member.id}`,
+        read_at: null,
+        created_at: member.created_at,
+      });
+      if (notification) count += 1;
+    }
+
+    for (const earned of db.achievements_earned) {
+      if (Date.parse(earned.earned_at) < cutoffMs) continue;
+      const achievement = achievements.get(earned.achievement_id);
+      if (!achievement || !users.has(earned.user_id)) continue;
+      const notification = addNotification(db, {
+        user_id: earned.user_id,
+        type: "achievement.unlocked",
+        title: `Achievement unlocked: ${achievement.name}`,
+        body: achievement.description,
+        url: "/?tab=stats",
+        data: { achievement: achievement.slug },
+        dedupe_key: `backfill:achievement:${earned.id}`,
+        read_at: backfilledAt,
+        created_at: earned.earned_at,
+      });
+      if (notification) count += 1;
+    }
+
+    db.config.notification_backfilled_at = backfilledAt;
+    return count;
+  });
+  debugLog("notifications.backfilled", {
+    count: created,
+    days: NOTIFICATION_BACKFILL_DAYS,
+  });
 }
 
 async function notifyAndPrune(recipientId, payload, context = {}) {
@@ -1765,6 +2104,14 @@ function passwordResetFromToken(token) {
 function cleanDisplayMode(value) {
   const displayMode = String(value || "browser");
   return PWA_DISPLAY_MODES.has(displayMode) ? displayMode : "browser";
+}
+
+function safeJson(value, fallback) {
+  try {
+    return JSON.parse(value || "");
+  } catch {
+    return fallback;
+  }
 }
 
 function editableProfile(user) {

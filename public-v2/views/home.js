@@ -1,6 +1,7 @@
 import { state, swipeOpen } from "../state.js";
 import { bindFriendCard, TRAY_W } from "../ui/friendCard.js";
 import { countdown, escHtml, formatDate, humanErr } from "../utils.js";
+import { bindNotifications, notificationButtonHtml, notificationSheetHtml } from "./notifications.js";
 
 export function renderHome(ctx) {
   const { app } = ctx;
@@ -13,7 +14,7 @@ export function renderHome(ctx) {
         <div class="app-wordmark"><span>W</span>ood</div>
         <div class="header-actions">
           ${pushBtnHtml()}
-          <button class="icon-btn" id="settings-btn" title="Settings">⚙</button>
+          ${notificationButtonHtml()}
         </div>
       </header>
 
@@ -30,6 +31,7 @@ export function renderHome(ctx) {
       </div>
 
       ${mainNavHtml()}
+      ${notificationSheetHtml()}
       ${state.showAddSheet ? addSheetHtml() : ""}
       ${state.showGroupSheet ? groupSheetHtml(d.friends || []) : ""}
     </div>
@@ -109,12 +111,12 @@ function mainNavHtml() {
       <button class="tab-btn ${state.homeTab === "groups" ? "active" : ""}" data-home-tab="groups">
         <span class="tab-icon">◎</span><span>Groups</span>
       </button>
-      <button class="tab-btn primary-tab" data-action="add-friend">
-        <span class="tab-icon">＋</span><span>${state.homeTab === "groups" ? "Group" : "Add"}</span>
+      <button class="tab-btn ${state.homeTab === "settings" ? "active" : ""}" data-home-tab="settings">
+        <span class="tab-icon">⚙</span><span>Settings</span>
       </button>
       ${isAdmin ? `
         <button class="tab-btn" data-route="/admin">
-          <span class="tab-icon">⚙</span><span>Admin</span>
+          <span class="tab-icon">✦</span><span>Admin</span>
         </button>
       ` : ""}
     </nav>
@@ -153,6 +155,10 @@ function requestsHtml(d) {
 function friendsListHtml(friends) {
   if (!friends.length) {
     return `
+      <div class="section-head with-action">
+        <span>Friends</span>
+        <button class="section-add-btn" type="button" data-action="add-friend" title="Add friend">＋</button>
+      </div>
       <div class="empty-state">
         <div class="empty-emoji">🪵</div>
         <p>Add a friend and start Wooding</p>
@@ -160,7 +166,10 @@ function friendsListHtml(friends) {
     `;
   }
   return `
-    <div class="section-head">Friends</div>
+    <div class="section-head with-action">
+      <span>Friends</span>
+      <button class="section-add-btn" type="button" data-action="add-friend" title="Add friend">＋</button>
+    </div>
     <div class="friends-list">
       ${friends.map(friendCardHtml).join("")}
     </div>
@@ -191,6 +200,10 @@ function groupInvitesHtml(invites) {
 function groupsListHtml(groups) {
   if (!groups.length) {
     return `
+      <div class="section-head with-action">
+        <span>Groups</span>
+        <button class="section-add-btn" type="button" data-action="add-group" title="Create group">＋</button>
+      </div>
       <div class="empty-state">
         <div class="empty-emoji">◎</div>
         <p>Create a group and Wood the room</p>
@@ -198,7 +211,10 @@ function groupsListHtml(groups) {
     `;
   }
   return `
-    <div class="section-head">Groups</div>
+    <div class="section-head with-action">
+      <span>Groups</span>
+      <button class="section-add-btn" type="button" data-action="add-group" title="Create group">＋</button>
+    </div>
     <div class="friends-list">
       ${groups.map(groupCardHtml).join("")}
     </div>
@@ -364,13 +380,14 @@ function pushBtnHtml() {
 }
 
 function bindHome(ctx) {
-  const { api, ensureAdminData, mutate, openHistory, openProfile, openSettings, refreshPushStatus, render, saveHomeTab, subscribePush } = ctx;
-  document.querySelector("#settings-btn")?.addEventListener("click", openSettings);
+  const { api, ensureAdminData, mutate, openHistory, openProfile, refreshPushStatus, render, saveHomeTab, subscribePush } = ctx;
+  bindNotifications(ctx);
 
   document.querySelectorAll("[data-home-tab]").forEach((btn) => {
     btn.addEventListener("click", () => {
       saveHomeTab(btn.dataset.homeTab);
-      renderHome(ctx);
+      if (btn.dataset.homeTab === "settings") render();
+      else renderHome(ctx);
     });
   });
 
@@ -392,15 +409,17 @@ function bindHome(ctx) {
   });
 
   document.querySelector("[data-action='add-friend']")?.addEventListener("click", () => {
-    if (state.homeTab === "groups") {
-      state.showGroupSheet = true;
-      state.groupError = "";
-    } else {
-      state.showAddSheet = true;
-      state.addError = "";
-    }
+    state.showAddSheet = true;
+    state.addError = "";
     renderHome(ctx);
-    setTimeout(() => document.querySelector("#add-input, #group-sheet input")?.focus(), 50);
+    setTimeout(() => document.querySelector("#add-input")?.focus(), 50);
+  });
+
+  document.querySelector("[data-action='add-group']")?.addEventListener("click", () => {
+    state.showGroupSheet = true;
+    state.groupError = "";
+    renderHome(ctx);
+    setTimeout(() => document.querySelector("#group-sheet input")?.focus(), 50);
   });
 
   document.querySelector("#sheet-overlay")?.addEventListener("click", (e) => {

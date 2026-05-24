@@ -110,6 +110,10 @@ function render() {
     renderAdmin(ctx);
     return;
   }
+  if (state.view === "home" && state.homeTab === "settings") {
+    renderSettings(ctx);
+    return;
+  }
   if (state.view === "history") {
     renderHistory(ctx);
     return;
@@ -144,9 +148,12 @@ async function logout() {
   state.view = "home";
   state.admin = null;
   state.passwordResetLink = null;
+  state.notificationsData = null;
+  state.notificationFreshIds = new Set();
   state.debug = null;
   state.profileUserId = null;
   state.profileData = null;
+  state.showNotificationSheet = false;
   stopPolling();
   stopRealtime();
   history.replaceState(null, "", "/");

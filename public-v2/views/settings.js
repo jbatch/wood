@@ -1,9 +1,12 @@
 import { state } from "../state.js";
 import { escHtml, humanErr } from "../utils.js";
+import { bindNotifications, notificationButtonHtml, notificationSheetHtml } from "./notifications.js";
 
 export async function openSettings(ctx) {
-  state.view = "settings";
+  ctx.saveHomeTab?.("settings");
+  state.view = "home";
   state.settingsError = "";
+  state.settingsNotice = "";
   ctx.render();
 }
 
@@ -13,14 +16,14 @@ export function renderSettings(ctx) {
   app.innerHTML = `
     <div class="shell">
       <header class="app-header">
-        <div class="header-left">
-          <button class="back-btn" id="back-btn">← Back</button>
+        <div class="app-wordmark"><span>W</span>ood</div>
+        <div class="header-actions">
+          ${notificationButtonHtml()}
         </div>
-        <div class="app-wordmark" style="font-size:17px">Settings</div>
-        <div class="header-actions"></div>
       </header>
       <div class="scroll-content profile-scroll">
         ${accountPanel()}
+        ${passwordPanel()}
         ${notificationsPanel(settings)}
         ${mutedPanel(settings.mutedFriends || [])}
         <section class="profile-panel">
@@ -28,15 +31,14 @@ export function renderSettings(ctx) {
           <button class="profile-action danger" type="button" id="logout-btn">Log out</button>
         </section>
         ${state.settingsError ? `<div class="error-banner">${escHtml(state.settingsError)}</div>` : ""}
+        ${state.settingsNotice ? `<div class="profile-notice settings-notice">${escHtml(state.settingsNotice)}</div>` : ""}
       </div>
+      ${settingsNavHtml()}
+      ${notificationSheetHtml()}
     </div>
   `;
 
-  document.querySelector("#back-btn")?.addEventListener("click", () => {
-    state.view = "home";
-    state.settingsError = "";
-    render();
-  });
+  bindNotifications(ctx);
   document.querySelector("#logout-btn")?.addEventListener("click", logout);
   document.querySelector("#bug-btn")?.addEventListener("click", () => {
     state.settingsError = "Bug reports are still a stump with a clipboard.";
@@ -44,6 +46,22 @@ export function renderSettings(ctx) {
   });
   document.querySelector("[data-self-profile]")?.addEventListener("click", () => {
     ctx.openProfile(state.data.user.id);
+  });
+  document.querySelectorAll("[data-home-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      ctx.saveHomeTab(btn.dataset.homeTab);
+      state.settingsError = "";
+      state.settingsNotice = "";
+      render();
+    });
+  });
+  document.querySelector("[data-route='/admin']")?.addEventListener("click", async () => {
+    history.pushState(null, "", "/admin");
+    await ctx.ensureAdminData();
+    render();
+  });
+  document.querySelector("#password-form")?.addEventListener("submit", async (event) => {
+    await updatePassword(ctx, event);
   });
   document.querySelectorAll("[data-snooze]").forEach((btn) => {
     btn.addEventListener("click", async () => {
@@ -58,6 +76,31 @@ export function renderSettings(ctx) {
       await unmuteFriend(ctx, btn.dataset.unmute);
     });
   });
+}
+
+function settingsNavHtml() {
+  const isAdmin = state.data?.user?.role === "admin";
+  return `
+    <nav class="bottom-tabs" aria-label="Main">
+      <button class="tab-btn" data-home-tab="friends">
+        <span class="tab-icon">●</span><span>Friends</span>
+      </button>
+      <button class="tab-btn" data-home-tab="stats">
+        <span class="tab-icon">◆</span><span>Stats</span>
+      </button>
+      <button class="tab-btn" data-home-tab="groups">
+        <span class="tab-icon">◎</span><span>Groups</span>
+      </button>
+      <button class="tab-btn active" data-home-tab="settings">
+        <span class="tab-icon">⚙</span><span>Settings</span>
+      </button>
+      ${isAdmin ? `
+        <button class="tab-btn" data-route="/admin">
+          <span class="tab-icon">✦</span><span>Admin</span>
+        </button>
+      ` : ""}
+    </nav>
+  `;
 }
 
 function accountPanel() {
@@ -76,6 +119,27 @@ function accountPanel() {
       </div>
       <button class="profile-action" type="button" data-self-profile>Edit public profile</button>
     </section>
+  `;
+}
+
+function passwordPanel() {
+  return `
+    <form class="profile-panel profile-form password-form" id="password-form" autocomplete="off">
+      <div class="field-label">Password</div>
+      <label class="profile-field">
+        <span>Current password</span>
+        <input class="field-input" name="currentPassword" type="password" autocomplete="current-password" required />
+      </label>
+      <label class="profile-field">
+        <span>New password</span>
+        <input class="field-input" name="newPassword" type="password" autocomplete="new-password" minlength="8" required />
+      </label>
+      <label class="profile-field">
+        <span>Confirm new password</span>
+        <input class="field-input" name="confirmPassword" type="password" autocomplete="new-password" minlength="8" required />
+      </label>
+      <button class="btn-primary" type="submit">Change password</button>
+    </form>
   `;
 }
 
@@ -129,6 +193,36 @@ async function updateSnooze(ctx, notificationSnooze) {
     render();
   } catch (err) {
     state.settingsError = humanErr(err.message);
+    render();
+  }
+}
+
+async function updatePassword(ctx, event) {
+  event.preventDefault();
+  const { api, render } = ctx;
+  const form = event.currentTarget;
+  const payload = Object.fromEntries(new FormData(form).entries());
+  if (payload.newPassword !== payload.confirmPassword) {
+    state.settingsError = "New passwords do not match";
+    state.settingsNotice = "";
+    render();
+    return;
+  }
+  try {
+    state.data = await api("/api/password", {
+      method: "POST",
+      body: {
+        currentPassword: payload.currentPassword,
+        newPassword: payload.newPassword,
+      },
+    });
+    form.reset();
+    state.settingsError = "";
+    state.settingsNotice = "Password changed";
+    render();
+  } catch (err) {
+    state.settingsError = humanErr(err.message);
+    state.settingsNotice = "";
     render();
   }
 }
