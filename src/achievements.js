@@ -1,4 +1,5 @@
 import { id } from "./ids.js";
+import { config } from "./config.js";
 
 const SPEEDY_REPLY_MS = 10 * 1000;
 const LATE_REPLY_WINDOW_MS = 5 * 60 * 1000;
@@ -344,8 +345,13 @@ function hasAllSeasonalWoods(db, sent) {
   return [...labels].every((label) => sentLabels.has(label));
 }
 
-function localHour(iso) {
-  return new Date(iso).getHours();
+function localHour(iso, timeZone = config.timeZone) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour: "numeric",
+    hourCycle: "h23",
+  }).formatToParts(new Date(iso));
+  return Number(parts.find((part) => part.type === "hour")?.value || 0);
 }
 
 function addCurrentReplySlugs(db, userId, context, slugs) {

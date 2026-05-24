@@ -375,12 +375,11 @@ test("fashionably late requires saving a streak just before it breaks", () => {
 });
 
 test("morning wood secret unlocks before seven", () => {
-  const localSixThirty = new Date(2026, 4, 22, 6, 30).toISOString();
   const db = dbWithWoods([
     {
       sender_id: "a",
       recipient_id: "b",
-      sent_at: localSixThirty,
+      sent_at: "2026-05-21T22:30:00.000Z",
       type: "normal",
       hold_duration_ms: 0,
     },
@@ -393,6 +392,38 @@ test("morning wood secret unlocks before seven", () => {
 
   assert.ok(slugs.includes("early-bird"));
   assert.equal(morningWood.name, "Morning Wood");
+});
+
+test("night owl uses the app timezone instead of UTC", () => {
+  const midMorningPerth = dbWithWoods([
+    {
+      sender_id: "a",
+      recipient_id: "b",
+      sent_at: "2026-05-24T02:34:00.000Z",
+      type: "normal",
+    },
+  ]);
+  ensureAchievementDefinitions(midMorningPerth);
+
+  const midMorningSlugs = evaluateAchievements(midMorningPerth, "a")
+    .map((achievement) => achievement.slug);
+
+  assert.equal(midMorningSlugs.includes("night-owl"), false);
+
+  const nightPerth = dbWithWoods([
+    {
+      sender_id: "a",
+      recipient_id: "b",
+      sent_at: "2026-05-23T18:34:00.000Z",
+      type: "normal",
+    },
+  ]);
+  ensureAchievementDefinitions(nightPerth);
+
+  const nightSlugs = evaluateAchievements(nightPerth, "a")
+    .map((achievement) => achievement.slug);
+
+  assert.equal(nightSlugs.includes("night-owl"), true);
 });
 
 test("a user is on cooldown after sending until the timeout expires", () => {
