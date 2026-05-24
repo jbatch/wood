@@ -24,7 +24,7 @@ export function renderAuth(ctx) {
         ` : ""}
         <div class="sheet-field">
           <div class="field-label">Username</div>
-          <input class="field-input" name="username" autocomplete="username" required placeholder="your_username" autocapitalize="none" autocorrect="off" spellcheck="false" />
+          <input class="field-input" name="username" autocomplete="username" required maxlength="32" placeholder="yng.rat.boi" autocapitalize="none" autocorrect="off" spellcheck="false" />
         </div>
         <div class="sheet-field">
           <div class="field-label">Password</div>

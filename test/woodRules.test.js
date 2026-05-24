@@ -34,6 +34,7 @@ import {
   groupInviteNotification,
   inviteUsedNotification,
 } from "../src/eventNotifications.js";
+import { cleanUsername, isValidUsername } from "../src/usernames.js";
 
 function dbWithWoods(woods = []) {
   return {
@@ -62,6 +63,14 @@ function dbWithWoods(woods = []) {
 
 test("a user can wood an accepted friend with no prior outgoing wood", () => {
   assert.equal(canSendWood(dbWithWoods(), "a", "b").ok, true);
+});
+
+test("usernames allow dotted friend handles", () => {
+  assert.equal(cleanUsername(" YNG.RAT.BOI "), "yng.rat.boi");
+  assert.equal(isValidUsername("yng.rat.boi"), true);
+  assert.equal(isValidUsername("yng-rat_boi"), true);
+  assert.equal(isValidUsername("no"), false);
+  assert.equal(isValidUsername("rat boi"), false);
 });
 
 test("groups can only invite existing accepted friends", () => {
@@ -459,7 +468,10 @@ test("a mutual exchange starts a pair streak", () => {
 
   assert.equal(result.incremented, true);
   assert.equal(result.streak.current_streak, 1);
-  assert.equal(visibleStreak(db, "a", "b").current_streak, 1);
+  assert.equal(
+    visibleStreak(db, "a", "b", Date.parse("2026-05-22T00:05:00.000Z")).current_streak,
+    1,
+  );
 });
 
 test("one-sided woods do not increment a streak", () => {

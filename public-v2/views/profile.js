@@ -123,7 +123,7 @@ function selfProfileForm(data) {
       <div class="field-label">Public profile</div>
       <label class="profile-field">
         <span>Username</span>
-        <input class="field-input" name="username" value="${escHtml(profile.username)}" maxlength="24" autocapitalize="none" autocomplete="off" />
+        <input class="field-input" name="username" value="${escHtml(profile.username)}" maxlength="32" autocapitalize="none" autocomplete="off" />
       </label>
       <label class="profile-field">
         <span>Favourite wood</span>

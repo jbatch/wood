@@ -65,6 +65,7 @@ import {
 import { notifyUser, pushPublicConfig } from "./push.js";
 import { serveStatic } from "./static.js";
 import { debugEntries, debugLog, endpointHost } from "./debugLog.js";
+import { cleanUsername, isValidUsername } from "./usernames.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "..", config.ui === "v2" ? "public-v2" : "public");
@@ -407,7 +408,7 @@ async function signup(req, res, body) {
   const email = String(body.email || "").trim().toLowerCase();
   const password = String(body.password || "");
 
-  if (!/^[a-z0-9_]{3,24}$/.test(username)) {
+  if (!isValidUsername(username)) {
     sendJson(res, 400, { error: "invalid_username" });
     return;
   }
@@ -601,7 +602,7 @@ async function updateProfile(user, res, body) {
   const birthday = cleanBirthday(body);
   const birthdayVisible = Boolean(body.birthdayVisible);
 
-  if (!/^[a-z0-9_]{3,24}$/.test(username)) {
+  if (!isValidUsername(username)) {
     sendJson(res, 400, { error: "invalid_username" });
     return;
   }
@@ -1639,10 +1640,6 @@ function privateSettings(db, userId) {
       .filter(Boolean)
       .sort((a, b) => a.username.localeCompare(b.username)),
   };
-}
-
-function cleanUsername(value) {
-  return String(value || "").trim().toLowerCase();
 }
 
 function cleanFavouriteWood(value) {
