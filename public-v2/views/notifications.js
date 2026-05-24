@@ -79,7 +79,7 @@ function notificationRowHtml(notification) {
       <span class="notification-type-dot"></span>
       <span class="notification-copy">
         <strong>${escHtml(notification.title)}</strong>
-        <span>${escHtml(notification.body)}</span>
+        <span>${notification.body ? escHtml(notification.body) : "&nbsp;"}</span>
         <small>${formatDate(notification.created_at)}</small>
       </span>
     </button>
