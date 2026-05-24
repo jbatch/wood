@@ -123,6 +123,14 @@ const FAVOURITE_WOODS = [
   "yggdrasil",
 ];
 const FOREVER_SNOOZE_UNTIL = "9999-12-31T23:59:59.000Z";
+const ACHIEVEMENT_EVENT_TYPES = new Set([
+  "history_view",
+  "profile_self_control",
+  "long_wood_cancelled",
+  "long_wood_overcooked",
+  "super_wood_declined",
+  "bug_report_submitted",
+]);
 
 await backfillNotificationsIfNeeded();
 await cleanNotificationCopyIfNeeded();
@@ -268,6 +276,9 @@ async function handleApi(req, res, url) {
   });
 
   if (req.method === "GET" && url.pathname === "/api/app") {
+    await evaluateAndNotifyAchievements([user.id], {
+      [user.id]: { now: nowIso() },
+    });
     sendJson(res, 200, appState(user));
     return;
   }
@@ -301,6 +312,11 @@ async function handleApi(req, res, url) {
   if (req.method === "POST" && url.pathname === "/api/client-status") {
     await updateClientStatus(user, body);
     sendNoContent(res);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/achievement-events") {
+    await createAchievementEvent(user, res, body);
     return;
   }
 
@@ -779,11 +795,40 @@ async function updateProfile(user, res, body) {
     }
     const fresh = db.users.find((candidate) => candidate.id === user.id);
     if (!fresh) return { error: "not_found" };
+    const favouriteChanged = (fresh.favourite_wood || "") !== favouriteWood;
+    const profileChanged =
+      fresh.username !== username ||
+      favouriteChanged ||
+      Number(fresh.birthday_month || 0) !== Number(birthday.month || 0) ||
+      Number(fresh.birthday_day || 0) !== Number(birthday.day || 0) ||
+      Boolean(fresh.birthday_visible) !== (birthdayVisible && Boolean(birthday.month && birthday.day));
     fresh.username = username;
     fresh.favourite_wood = favouriteWood;
     fresh.birthday_month = birthday.month;
     fresh.birthday_day = birthday.day;
     fresh.birthday_visible = birthdayVisible && Boolean(birthday.month && birthday.day);
+    if (profileChanged) {
+      db.achievement_events ||= [];
+      db.achievement_events.push({
+        id: id("ach_event"),
+        user_id: user.id,
+        type: "profile_changed",
+        subject_id: null,
+        meta_json: "{}",
+        created_at: nowIso(),
+      });
+    }
+    if (favouriteChanged && favouriteWood) {
+      db.achievement_events ||= [];
+      db.achievement_events.push({
+        id: id("ach_event"),
+        user_id: user.id,
+        type: "favourite_wood_changed",
+        subject_id: null,
+        meta_json: JSON.stringify({ favouriteWood }),
+        created_at: nowIso(),
+      });
+    }
     return { ok: true };
   });
 
@@ -791,6 +836,7 @@ async function updateProfile(user, res, body) {
     sendJson(res, result.error === "not_found" ? 404 : 400, { error: result.error });
     return;
   }
+  await evaluateAndNotifyAchievements([user.id]);
   emitUserEvent(user.id, "app.changed", { reason: "profile.updated" });
   sendJson(res, 200, appState(currentUserFromId(user.id)));
 }
@@ -804,8 +850,23 @@ async function updateSettings(user, res, body) {
 
   await store.write((db) => {
     const fresh = db.users.find((candidate) => candidate.id === user.id);
-    if (fresh) fresh.notification_snoozed_until = snoozedUntil;
+    if (fresh) {
+      const changed = (fresh.notification_snoozed_until || null) !== (snoozedUntil || null);
+      fresh.notification_snoozed_until = snoozedUntil;
+      if (changed) {
+        db.achievement_events ||= [];
+        db.achievement_events.push({
+          id: id("ach_event"),
+          user_id: user.id,
+          type: "settings_changed",
+          subject_id: null,
+          meta_json: "{}",
+          created_at: nowIso(),
+        });
+      }
+    }
   });
+  await evaluateAndNotifyAchievements([user.id]);
   emitUserEvent(user.id, "app.changed", { reason: "settings.updated" });
   sendJson(res, 200, appState(currentUserFromId(user.id)));
 }
@@ -827,6 +888,15 @@ async function updatePassword(user, res, body) {
     if (!fresh) return;
     fresh.password_hash = await hashPassword(nextPassword);
     fresh.last_active_at = nowIso();
+    db.achievement_events ||= [];
+    db.achievement_events.push({
+      id: id("ach_event"),
+      user_id: user.id,
+      type: "password_changed",
+      subject_id: null,
+      meta_json: "{}",
+      created_at: nowIso(),
+    });
   });
   emitUserEvent(user.id, "app.changed", { reason: "password.updated" });
   sendJson(res, 200, appState(currentUserFromId(user.id)));
@@ -886,6 +956,41 @@ async function updateClientStatus(user, body) {
       fresh.pwa_last_seen_at = seenAt;
       if (!fresh.pwa_installed_at) fresh.pwa_installed_at = seenAt;
     }
+  });
+}
+
+async function createAchievementEvent(user, res, body) {
+  const type = String(body.type || "");
+  if (!ACHIEVEMENT_EVENT_TYPES.has(type)) {
+    sendJson(res, 400, { error: "invalid_achievement_event" });
+    return;
+  }
+
+  const subjectId = body.friendId ? String(body.friendId) : null;
+  if (subjectId) {
+    const friendship = findFriendship(store.db, user.id, subjectId);
+    if (!friendship || friendship.status !== "accepted") {
+      sendJson(res, 404, { error: "not_found" });
+      return;
+    }
+  }
+
+  await recordAchievementEvent(user.id, type, subjectId, body.meta || {});
+  await evaluateAndNotifyAchievements([user.id]);
+  sendJson(res, 200, appState(currentUserFromId(user.id)));
+}
+
+async function recordAchievementEvent(userId, type, subjectId = null, meta = {}) {
+  await store.write((db) => {
+    db.achievement_events ||= [];
+    db.achievement_events.push({
+      id: id("ach_event"),
+      user_id: userId,
+      type,
+      subject_id: subjectId || null,
+      meta_json: JSON.stringify(meta || {}),
+      created_at: nowIso(),
+    });
   });
 }
 
@@ -1139,6 +1244,15 @@ async function handleFriendAction(user, res, friendId, action, body) {
     if (action === "mute") {
       if (!db.mutes.some((mute) => mute.muter_id === user.id && mute.muted_id === friendId)) {
         db.mutes.push({ id: id("mute"), muter_id: user.id, muted_id: friendId });
+        db.achievement_events ||= [];
+        db.achievement_events.push({
+          id: id("ach_event"),
+          user_id: user.id,
+          type: "friend_muted",
+          subject_id: friendId,
+          meta_json: "{}",
+          created_at: nowIso(),
+        });
       }
     }
     if (action === "unmute") {
@@ -1173,6 +1287,7 @@ async function handleFriendAction(user, res, friendId, action, body) {
     reason: `friend.${action}`,
     friendId,
   });
+  if (action === "mute") await evaluateAndNotifyAchievements([user.id]);
   sendJson(res, 200, appState(user));
 }
 
@@ -1185,6 +1300,12 @@ async function sendWood(user, res, recipientId, body) {
 
   const state = canSendWood(store.db, user.id, recipientId);
   if (!state.ok) {
+    if (state.reason === "cooldown") {
+      await recordAchievementEvent(user.id, "cooldown_attempt", recipientId, {
+        expiresAt: state.expiresAt || null,
+      });
+      await evaluateAndNotifyAchievements([user.id]);
+    }
     debugLog("wood.blocked", {
       senderId: user.id,
       senderUsername: user.username,
@@ -1311,7 +1432,7 @@ async function sendWood(user, res, recipientId, body) {
     await notifyStreakMilestone(user, recipient, streakResult.milestone);
   }
 
-  await evaluateAndNotifyAchievements([user.id], {
+  await evaluateAndNotifyAchievements([user.id, recipientId], {
     [user.id]: { wood, streakResult, earnedAt: wood.sent_at },
   });
   if (wood.type === "birthday") {

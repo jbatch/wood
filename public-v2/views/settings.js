@@ -27,6 +27,8 @@ export function renderSettings(ctx) {
         ${notificationsPanel(settings)}
         ${mutedPanel(settings.mutedFriends || [])}
         <section class="profile-panel">
+          <div class="field-label">Highly questionable extras</div>
+          <button class="profile-action" type="button" id="super-wood-btn">Buy Super Wood</button>
           <button class="profile-action" type="button" id="bug-btn">Report a bug</button>
           <button class="profile-action danger" type="button" id="logout-btn">Log out</button>
         </section>
@@ -40,9 +42,11 @@ export function renderSettings(ctx) {
 
   bindNotifications(ctx);
   document.querySelector("#logout-btn")?.addEventListener("click", logout);
-  document.querySelector("#bug-btn")?.addEventListener("click", () => {
-    state.settingsError = "Bug reports are still a stump with a clipboard.";
-    renderSettings(ctx);
+  document.querySelector("#bug-btn")?.addEventListener("click", async () => {
+    await recordSettingsBit(ctx, "bug_report_submitted", "Bug report filed with absolutely no form.");
+  });
+  document.querySelector("#super-wood-btn")?.addEventListener("click", async () => {
+    await recordSettingsBit(ctx, "super_wood_declined", "Transaction declined. Super Wood remains theoretical.");
   });
   document.querySelector("[data-self-profile]")?.addEventListener("click", () => {
     ctx.openProfile(state.data.user.id);
@@ -76,6 +80,23 @@ export function renderSettings(ctx) {
       await unmuteFriend(ctx, btn.dataset.unmute);
     });
   });
+}
+
+async function recordSettingsBit(ctx, type, notice) {
+  const { api, render } = ctx;
+  try {
+    state.data = await api("/api/achievement-events", {
+      method: "POST",
+      body: { type },
+    });
+    state.settingsError = "";
+    state.settingsNotice = notice;
+    render();
+  } catch (err) {
+    state.settingsError = humanErr(err.message);
+    state.settingsNotice = "";
+    render();
+  }
 }
 
 function settingsNavHtml() {

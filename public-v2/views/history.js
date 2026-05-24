@@ -1,6 +1,12 @@
 import { state } from "../state.js";
 import { countdown, escHtml, humanErr } from "../utils.js";
 
+const LONG_HOLD_ARM_MS = 450;
+const LONG_HOLD_MIN_MS = 2000;
+const LONG_HOLD_MAX_MS = 10000;
+const LONG_HOLD_FAIL_MS = 11000;
+let longHold = null;
+
 export async function openHistory(ctx, friendId) {
   const { api, render } = ctx;
   state.view = "history";
@@ -10,6 +16,10 @@ export async function openHistory(ctx, friendId) {
   render();
   try {
     state.historyData = await api(`/api/friends/${friendId}/woods`);
+    api("/api/achievement-events", {
+      method: "POST",
+      body: { type: "history_view", friendId },
+    }).catch(() => {});
     render();
     scrollHistoryToBottom();
   } catch (err) {
@@ -68,7 +78,7 @@ export function renderHistory(ctx) {
   document.querySelectorAll("[data-keyboard-open]").forEach((btn) => {
     btn.addEventListener("click", () => openWoodKeyboard(ctx));
   });
-  document.querySelector("#wood-key")?.addEventListener("click", () => sendHistoryWood(ctx));
+  bindWoodKey(ctx);
   document.querySelector("#birthday-key")?.addEventListener("click", () => sendHistoryWood(ctx, { birthday: true }));
   document.querySelector("#history-messages")?.addEventListener("click", () => {
     if (state.woodKeyboardOpen) {
@@ -105,9 +115,12 @@ function historyComposerHtml(friend) {
               <small>Birthday Wood</small>
             </button>
           ` : ""}
-          <button class="wood-key ${cooldown ? "cooldown" : ""}" id="wood-key" type="button">
-            <span>🪵</span>
-            <small>${escHtml(keyHint)}</small>
+          <button class="wood-key ${cooldown ? "cooldown" : ""}" id="wood-key" type="button" style="--long-progress:0">
+            <span class="wood-key-icon">🪵</span>
+            <strong class="wood-key-title">${escHtml(keyHint)}</strong>
+            <small class="wood-key-subtitle">${cooldown ? "Awaiting wood clearance" : "Tap for Wood. Hold to power a Long Wood."}</small>
+            <div class="long-meter" aria-hidden="true"><i></i></div>
+            <em class="long-stage">Long Wood charges here</em>
           </button>
         </div>
       ` : ""}
@@ -134,7 +147,7 @@ async function sendHistoryWood(ctx, options = {}) {
   try {
     state.data = await api(`/api/friends/${friendId}/wood`, {
       method: "POST",
-      body: options.birthday ? { birthday: true } : { holdMs: 0 },
+      body: options.birthday ? { birthday: true } : { holdMs: options.holdMs || 0 },
     });
     state.historyData = await api(`/api/friends/${friendId}/woods`);
     state.error = "";
@@ -143,6 +156,133 @@ async function sendHistoryWood(ctx, options = {}) {
   } catch (err) {
     showToast(humanErr(err.message));
   }
+}
+
+function bindWoodKey(ctx) {
+  const key = document.querySelector("#wood-key");
+  if (!key) return;
+  key.addEventListener("pointerdown", (event) => startLongHold(ctx, key, event));
+  key.addEventListener("pointerup", (event) => finishLongHold(ctx, key, event));
+  key.addEventListener("pointercancel", () => cancelLongHold(ctx, key));
+  key.addEventListener("lostpointercapture", () => {
+    if (longHold?.key === key) cancelLongHold(ctx, key);
+  });
+}
+
+function startLongHold(ctx, key, event) {
+  const friend = currentHistoryFriend();
+  if (!friend?.wood?.canWood || event.button > 0) return;
+  event.preventDefault();
+  key.setPointerCapture?.(event.pointerId);
+  longHold = {
+    key,
+    pointerId: event.pointerId,
+    startedAt: performance.now(),
+    armed: false,
+    failed: false,
+    frame: null,
+  };
+  tickLongHold(ctx);
+}
+
+function tickLongHold(ctx) {
+  if (!longHold) return;
+  const elapsed = performance.now() - longHold.startedAt;
+  const progress = Math.min(1, elapsed / LONG_HOLD_MAX_MS);
+  longHold.armed = elapsed >= LONG_HOLD_ARM_MS;
+  longHold.failed = elapsed >= LONG_HOLD_FAIL_MS;
+  longHold.key.classList.toggle("charging", longHold.armed && !longHold.failed);
+  longHold.key.classList.toggle("failed", longHold.failed);
+  longHold.key.style.setProperty("--long-progress", String(progress));
+  updateLongHoldCopy(longHold.key, elapsed);
+  longHold.frame = requestAnimationFrame(() => tickLongHold(ctx));
+}
+
+function updateLongHoldCopy(key, elapsed) {
+  const title = key.querySelector(".wood-key-title");
+  const subtitle = key.querySelector(".wood-key-subtitle");
+  const stage = key.querySelector(".long-stage");
+  if (!title || !subtitle || !stage) return;
+  const label = longHoldLabel(elapsed);
+  if (elapsed < LONG_HOLD_ARM_MS) {
+    title.textContent = "Send Wood";
+    subtitle.textContent = "Keep holding to power up a Long Wood.";
+    stage.textContent = "Tap release sends regular Wood";
+  } else if (elapsed < LONG_HOLD_MIN_MS) {
+    title.textContent = "Powering up...";
+    subtitle.textContent = "Release now to cancel the ritual.";
+    stage.textContent = "Not long enough";
+  } else if (elapsed < LONG_HOLD_FAIL_MS) {
+    title.textContent = label;
+    subtitle.textContent = "Release to send. Do not overdo it.";
+    stage.textContent = `${Math.round(Math.min(100, elapsed / LONG_HOLD_MAX_MS * 100))}% charged`;
+  } else {
+    title.textContent = "Too much Wood";
+    subtitle.textContent = "Release to reset. Nothing sends.";
+    stage.textContent = "Failed";
+  }
+}
+
+function longHoldLabel(elapsed) {
+  if (elapsed >= 9250) return "Max Length Loooong Wood";
+  if (elapsed >= 7000) return "Looong Wood";
+  if (elapsed >= 4500) return "Loong Wood";
+  return "Long Wood";
+}
+
+async function finishLongHold(ctx, key, event) {
+  if (!longHold || longHold.key !== key || event.pointerId !== longHold.pointerId) return;
+  event.preventDefault();
+  const elapsed = performance.now() - longHold.startedAt;
+  clearLongHold(key);
+  if (elapsed < LONG_HOLD_ARM_MS) {
+    await sendHistoryWood(ctx);
+    return;
+  }
+  if (elapsed < LONG_HOLD_MIN_MS) {
+    await recordLongWoodEvent(ctx, "long_wood_cancelled");
+    ctx.showToast?.("Long Wood cancelled");
+    return;
+  }
+  if (elapsed >= LONG_HOLD_FAIL_MS) {
+    await recordLongWoodEvent(ctx, "long_wood_overcooked");
+    ctx.showToast?.("Held too long. The Wood reset itself.");
+    return;
+  }
+  await sendHistoryWood(ctx, { holdMs: Math.min(Math.round(elapsed), LONG_HOLD_MAX_MS) });
+}
+
+function cancelLongHold(ctx, key) {
+  if (!longHold || longHold.key !== key) return;
+  const elapsed = performance.now() - longHold.startedAt;
+  clearLongHold(key);
+  if (elapsed >= LONG_HOLD_ARM_MS && elapsed < LONG_HOLD_MIN_MS) {
+    recordLongWoodEvent(ctx, "long_wood_cancelled").catch(() => {});
+  }
+}
+
+function clearLongHold(key) {
+  cancelAnimationFrame(longHold?.frame);
+  longHold = null;
+  key.classList.remove("charging", "failed");
+  key.style.setProperty("--long-progress", "0");
+  const title = key.querySelector(".wood-key-title");
+  const subtitle = key.querySelector(".wood-key-subtitle");
+  const stage = key.querySelector(".long-stage");
+  const friend = currentHistoryFriend();
+  const cooldown = friend?.wood?.cooldownExpiresAt;
+  if (title) title.textContent = cooldown ? `Cooldown ${countdown(cooldown)}` : "Send Wood";
+  if (subtitle) subtitle.textContent = cooldown
+    ? "Awaiting wood clearance"
+    : "Tap for Wood. Hold to power a Long Wood.";
+  if (stage) stage.textContent = "Long Wood charges here";
+}
+
+async function recordLongWoodEvent(ctx, type) {
+  state.data = await ctx.api("/api/achievement-events", {
+    method: "POST",
+    body: { type, friendId: state.historyFriendId },
+  });
 }
 
 function historyMessagesHtml(woods, userId, friendName) {

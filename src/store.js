@@ -245,6 +245,16 @@ function migrate(sqlite) {
       FOREIGN KEY (achievement_id) REFERENCES achievements_def(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS achievement_events (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      subject_id TEXT,
+      meta_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS app_config (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       config_json TEXT NOT NULL
@@ -258,6 +268,8 @@ function migrate(sqlite) {
       ON group_woods(group_id, sender_id, sent_at);
     CREATE INDEX IF NOT EXISTS idx_notifications_user_created
       ON notifications(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_achievement_events_user_type_created
+      ON achievement_events(user_id, type, created_at);
   `);
 
   ensureColumn(sqlite, "users", "deleted_at", "TEXT");
@@ -345,6 +357,7 @@ function loadSnapshot(sqlite) {
     streaks: sqlite.prepare("SELECT * FROM streaks ORDER BY updated_at, id").all(),
     achievements_def: sqlite.prepare("SELECT * FROM achievements_def ORDER BY rowid").all(),
     achievements_earned: sqlite.prepare("SELECT * FROM achievements_earned ORDER BY earned_at, id").all(),
+    achievement_events: sqlite.prepare("SELECT * FROM achievement_events ORDER BY created_at, id").all(),
     config: configRow ? JSON.parse(configRow.config_json) : initialConfig,
   });
 }
@@ -411,6 +424,11 @@ function normalizeDb(db) {
     })),
     achievements_def: (db.achievements_def || []).map(normalizeAchievementDef),
     achievements_earned: db.achievements_earned || [],
+    achievement_events: (db.achievement_events || []).map((event) => ({
+      ...event,
+      subject_id: event.subject_id || null,
+      meta_json: event.meta_json || "{}",
+    })),
     config: { ...initialConfig, ...(db.config || {}) },
   };
 }
@@ -421,6 +439,7 @@ function persistSnapshot(sqlite, db) {
     sqlite.exec(`
       DELETE FROM achievements_earned;
       DELETE FROM achievements_def;
+      DELETE FROM achievement_events;
       DELETE FROM mutes;
       DELETE FROM streaks;
       DELETE FROM group_woods;
@@ -650,6 +669,20 @@ function persistSnapshot(sqlite, db) {
     `);
     for (const earned of snapshot.achievements_earned) {
       insertAchievementEarned.run(earned);
+    }
+
+    const insertAchievementEvent = sqlite.prepare(`
+      INSERT INTO achievement_events
+        (id, user_id, type, subject_id, meta_json, created_at)
+      VALUES
+        (@id, @user_id, @type, @subject_id, @meta_json, @created_at)
+    `);
+    for (const event of snapshot.achievement_events) {
+      insertAchievementEvent.run({
+        ...event,
+        subject_id: event.subject_id || null,
+        meta_json: event.meta_json || "{}",
+      });
     }
 
     sqlite

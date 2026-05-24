@@ -11,8 +11,6 @@ export function bindFriendCard(card, { mutate }) {
 
   let startX = 0, startY = 0, startTime = 0;
   let isSwiping = false;
-  let isHolding = false;
-  let holdTimer = null;
   let pointerId = null;
 
   const isOpen = () => swipeOpen.has(friendId);
@@ -43,14 +41,6 @@ export function bindFriendCard(card, { mutate }) {
     startY = e.clientY;
     startTime = Date.now();
     isSwiping = false;
-    isHolding = false;
-
-    holdTimer = setTimeout(() => {
-      if (!isSwiping) {
-        isHolding = true;
-        card.classList.add("holding");
-      }
-    }, 380);
   });
 
   card.addEventListener("pointermove", (e) => {
@@ -60,9 +50,6 @@ export function bindFriendCard(card, { mutate }) {
 
     if (!isSwiping && Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy) * 1.4) {
       isSwiping = true;
-      clearTimeout(holdTimer);
-      isHolding = false;
-      card.classList.remove("holding");
       card.classList.add("swiping");
     }
 
@@ -75,7 +62,6 @@ export function bindFriendCard(card, { mutate }) {
 
   card.addEventListener("pointerup", async (e) => {
     if (e.pointerId !== pointerId) return;
-    clearTimeout(holdTimer);
     const totalDx = e.clientX - startX;
     const elapsed = Date.now() - startTime;
     const velocity = Math.abs(totalDx) / elapsed;
@@ -92,31 +78,19 @@ export function bindFriendCard(card, { mutate }) {
         snapClosed();
         return;
       }
-      if (isHolding) {
-        card.classList.remove("holding");
-        if (!canWood) return;
-        card.classList.add("long-wood-sent");
-        card.addEventListener("animationend", () => card.classList.remove("long-wood-sent"), { once: true });
-        await mutate(`/api/friends/${friendId}/wood`, { holdMs: elapsed });
-      } else {
-        if (!canWood) return;
-        card.classList.add("wood-sent");
-        card.addEventListener("animationend", () => card.classList.remove("wood-sent"), { once: true });
-        await mutate(`/api/friends/${friendId}/wood`, { holdMs: 0 });
-      }
+      if (!canWood) return;
+      card.classList.add("wood-sent");
+      card.addEventListener("animationend", () => card.classList.remove("wood-sent"), { once: true });
+      await mutate(`/api/friends/${friendId}/wood`, { holdMs: 0 });
     }
     card.classList.remove("swiping");
     isSwiping = false;
-    isHolding = false;
   });
 
   card.addEventListener("pointercancel", () => {
-    clearTimeout(holdTimer);
-    card.classList.remove("holding");
     card.classList.remove("swiping");
     isOpen() ? snapOpen() : snapClosed();
     isSwiping = false;
-    isHolding = false;
   });
 }
 

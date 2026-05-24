@@ -51,6 +51,7 @@ function dbWithWoods(woods = []) {
     streaks: [],
     achievements_def: [],
     achievements_earned: [],
+    achievement_events: [],
     groups: [],
     group_members: [],
     group_woods: [],
@@ -178,6 +179,19 @@ test("achievement definitions refresh renamed copy", () => {
   assert.equal(definition.icon, "am");
 });
 
+test("secret achievements show names while hiding unlock methods", () => {
+  const db = dbWithWoods();
+  ensureAchievementDefinitions(db);
+
+  const hidden = achievementProgress(db, "a")
+    .find((achievement) => achievement.slug === "commitment-issues");
+
+  assert.equal(hidden.name, "Commitment Issues");
+  assert.equal(hidden.description, "Secret achievement");
+  assert.equal(hidden.icon, "nope");
+  assert.equal(hidden.earned, false);
+});
+
 test("admin can reset earned achievements for one user", () => {
   const db = dbWithWoods([
     {
@@ -248,6 +262,86 @@ test("achievements cover sending and receiving Birthday Woods", () => {
 
   assert.ok(senderSlugs.includes("birthday-wood"));
   assert.ok(recipientSlugs.includes("happy-birthday-to-me"));
+});
+
+test("achievement events unlock non-wood UI rituals", () => {
+  const db = dbWithWoods();
+  db.achievement_events.push(
+    {
+      id: "event_1",
+      user_id: "a",
+      type: "long_wood_cancelled",
+      subject_id: "b",
+      meta_json: "{}",
+      created_at: "2026-05-22T00:00:00.000Z",
+    },
+    {
+      id: "event_2",
+      user_id: "a",
+      type: "long_wood_overcooked",
+      subject_id: "b",
+      meta_json: "{}",
+      created_at: "2026-05-22T00:01:00.000Z",
+    },
+    {
+      id: "event_3",
+      user_id: "a",
+      type: "super_wood_declined",
+      subject_id: null,
+      meta_json: "{}",
+      created_at: "2026-05-22T00:02:00.000Z",
+    },
+  );
+  ensureAchievementDefinitions(db);
+
+  const slugs = evaluateAchievements(db, "a").map((achievement) => achievement.slug);
+
+  assert.ok(slugs.includes("commitment-issues"));
+  assert.ok(slugs.includes("overcooked"));
+  assert.ok(slugs.includes("declined-transaction"));
+});
+
+test("new relationship achievements avoid duplicating old basic milestones", () => {
+  const db = dbWithWoods([
+    {
+      id: "max_b",
+      sender_id: "a",
+      recipient_id: "b",
+      sent_at: "2026-05-22T00:00:00.000Z",
+      type: "long",
+      hold_duration_ms: 9600,
+    },
+    {
+      id: "max_c",
+      sender_id: "a",
+      recipient_id: "c",
+      sent_at: "2026-05-22T00:01:00.000Z",
+      type: "long",
+      hold_duration_ms: 9600,
+    },
+    {
+      id: "max_d",
+      sender_id: "a",
+      recipient_id: "d",
+      sent_at: "2026-05-22T00:02:00.000Z",
+      type: "long",
+      hold_duration_ms: 9600,
+    },
+  ]);
+  db.users.push(
+    { id: "c", username: "cam", created_at: "2026-05-01T00:00:00.000Z" },
+    { id: "d", username: "dee", created_at: "2026-05-01T00:00:00.000Z" },
+  );
+  db.friendships.push(
+    { id: "friendship_2", requester_id: "a", addressee_id: "c", status: "accepted" },
+    { id: "friendship_3", requester_id: "a", addressee_id: "d", status: "accepted" },
+  );
+  ensureAchievementDefinitions(db);
+
+  const slugs = evaluateAchievements(db, "a").map((achievement) => achievement.slug);
+
+  assert.ok(slugs.includes("long-game"));
+  assert.ok(slugs.includes("maximum-grain"));
 });
 
 test("reply achievements are tied to the current Wood", () => {
@@ -474,13 +568,18 @@ test("visible state marks a friend as needing a reply", () => {
   assert.equal(visibleWoodState(db, "a", "b").needsReply, true);
 });
 
-test("long woods stretch the label from hold duration", () => {
+test("long woods use staged labels from hold duration", () => {
   assert.deepEqual(woodVariant({ holdMs: 0 }), {
     type: "normal",
     label: "Wood",
   });
-  assert.equal(woodVariant({ holdMs: 2800 }).type, "long");
-  assert.match(woodVariant({ holdMs: 2800 }).label, /^Wo+d$/);
+  assert.deepEqual(woodVariant({ holdMs: 2800 }), {
+    type: "long",
+    label: "Long Wood",
+  });
+  assert.equal(woodVariant({ holdMs: 5200 }).label, "Loong Wood");
+  assert.equal(woodVariant({ holdMs: 7600 }).label, "Looong Wood");
+  assert.equal(woodVariant({ holdMs: 9600 }).label, "Max Length Loooong Wood");
 });
 
 test("a mutual exchange starts a pair streak", () => {

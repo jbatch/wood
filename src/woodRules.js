@@ -1,5 +1,7 @@
-const LONG_WOOD_MAX_MS = 10000;
-const LONG_WOOD_MIN_MS = 2000;
+export const LONG_WOOD_MAX_MS = 10000;
+export const LONG_WOOD_FAIL_MS = 11000;
+export const LONG_WOOD_MIN_MS = 2000;
+export const LONG_WOOD_MAX_LABEL_MS = 9250;
 const STREAK_WINDOW_MS = 24 * 60 * 60 * 1000;
 const STREAK_INCREMENT_MIN_MS = 20 * 60 * 60 * 1000;
 const STREAK_BREAK_MS = 48 * 60 * 60 * 1000;
@@ -94,13 +96,20 @@ export function woodVariant({ holdMs = 0, seasonal = null } = {}) {
   if (seasonal) return { type: "seasonal", label: seasonal.label };
   if (holdMs >= LONG_WOOD_MIN_MS) {
     const capped = Math.min(holdMs, LONG_WOOD_MAX_MS);
-    const extra = Math.floor((capped - LONG_WOOD_MIN_MS) / 800) + 5;
+    const label = longWoodLabel(capped);
     return {
       type: "long",
-      label: `W${"o".repeat(extra)}d`,
+      label,
     };
   }
   return { type: "normal", label: "Wood" };
+}
+
+function longWoodLabel(holdMs) {
+  if (holdMs >= LONG_WOOD_MAX_LABEL_MS) return "Max Length Loooong Wood";
+  if (holdMs >= 7000) return "Looong Wood";
+  if (holdMs >= 4500) return "Loong Wood";
+  return "Long Wood";
 }
 
 export function seasonalTheme(db, date = new Date()) {
