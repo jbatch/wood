@@ -6,6 +6,8 @@ const LONG_HOLD_MIN_MS = 2000;
 const LONG_HOLD_MAX_MS = 10000;
 const LONG_HOLD_FAIL_MS = 11000;
 let longHold = null;
+let selfControlFriendId = null;
+let selfControlActionTaken = false;
 
 export async function openHistory(ctx, friendId) {
   const { api, render } = ctx;
@@ -13,6 +15,8 @@ export async function openHistory(ctx, friendId) {
   state.historyFriendId = friendId;
   state.historyData = null;
   state.woodKeyboardOpen = false;
+  selfControlFriendId = null;
+  selfControlActionTaken = false;
   render();
   try {
     state.historyData = await api(`/api/friends/${friendId}/woods`);
@@ -66,11 +70,8 @@ export function renderHistory(ctx) {
     </div>
   `;
 
-  document.querySelector("#back-btn").addEventListener("click", () => {
-    state.view = "home";
-    state.historyData = null;
-    state.woodKeyboardOpen = false;
-    render();
+  document.querySelector("#back-btn").addEventListener("click", async () => {
+    await leaveHistory(ctx);
   });
 
   document.querySelector("#composer-input")?.addEventListener("click", () => openWoodKeyboard(ctx));
@@ -118,9 +119,9 @@ function historyComposerHtml(friend) {
           <button class="wood-key ${cooldown ? "cooldown" : ""}" id="wood-key" type="button" style="--long-progress:0">
             <span class="wood-key-icon">🪵</span>
             <strong class="wood-key-title">${escHtml(keyHint)}</strong>
-            <small class="wood-key-subtitle">${cooldown ? "Awaiting wood clearance" : "Tap for Wood. Hold to power a Long Wood."}</small>
+            <small class="wood-key-subtitle">${cooldown ? "Awaiting wood clearance" : "Tap to send"}</small>
             <div class="long-meter" aria-hidden="true"><i></i></div>
-            <em class="long-stage">Long Wood charges here</em>
+            <em class="long-stage"></em>
           </button>
         </div>
       ` : ""}
@@ -130,8 +131,23 @@ function historyComposerHtml(friend) {
 
 function openWoodKeyboard(ctx) {
   if (state.woodKeyboardOpen) return;
+  const friend = currentHistoryFriend();
+  if (friend?.wood?.canWood) {
+    selfControlFriendId = state.historyFriendId;
+    selfControlActionTaken = false;
+  }
   state.woodKeyboardOpen = true;
   renderHistory(ctx);
+}
+
+async function leaveHistory(ctx) {
+  await recordHistoryKeyboardSelfControl(ctx);
+  state.view = "home";
+  state.historyData = null;
+  state.woodKeyboardOpen = false;
+  selfControlFriendId = null;
+  selfControlActionTaken = false;
+  ctx.render();
 }
 
 async function sendHistoryWood(ctx, options = {}) {
@@ -145,6 +161,7 @@ async function sendHistoryWood(ctx, options = {}) {
   }
 
   try {
+    selfControlActionTaken = true;
     state.data = await api(`/api/friends/${friendId}/wood`, {
       method: "POST",
       body: options.birthday ? { birthday: true } : { holdMs: options.holdMs || 0 },
@@ -274,15 +291,31 @@ function clearLongHold(key) {
   if (title) title.textContent = cooldown ? `Cooldown ${countdown(cooldown)}` : "Send Wood";
   if (subtitle) subtitle.textContent = cooldown
     ? "Awaiting wood clearance"
-    : "Tap for Wood. Hold to power a Long Wood.";
-  if (stage) stage.textContent = "Long Wood charges here";
+    : "Tap to send";
+  if (stage) stage.textContent = "";
 }
 
 async function recordLongWoodEvent(ctx, type) {
+  selfControlActionTaken = true;
   state.data = await ctx.api("/api/achievement-events", {
     method: "POST",
     body: { type, friendId: state.historyFriendId },
   });
+}
+
+async function recordHistoryKeyboardSelfControl(ctx) {
+  if (!selfControlFriendId || selfControlActionTaken) return;
+  const friendId = selfControlFriendId;
+  selfControlFriendId = null;
+  selfControlActionTaken = true;
+  try {
+    state.data = await ctx.api("/api/achievement-events", {
+      method: "POST",
+      body: { type: "history_keyboard_self_control", friendId },
+    });
+  } catch {
+    // Leaving history should not be blocked by achievement bookkeeping.
+  }
 }
 
 function historyMessagesHtml(woods, userId, friendName) {

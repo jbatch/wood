@@ -125,6 +125,7 @@ const FAVOURITE_WOODS = [
 const FOREVER_SNOOZE_UNTIL = "9999-12-31T23:59:59.000Z";
 const ACHIEVEMENT_EVENT_TYPES = new Set([
   "history_view",
+  "history_keyboard_self_control",
   "profile_self_control",
   "long_wood_cancelled",
   "long_wood_overcooked",

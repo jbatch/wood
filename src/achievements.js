@@ -664,7 +664,10 @@ function addEventSlugs(db, userId, sent, slugs, context) {
   if (events.filter((event) => event.type === "cooldown_attempt").length >= 10) {
     slugs.add("bad-timing");
   }
-  if (events.some((event) => event.type === "profile_self_control")) {
+  if (events.some((event) =>
+    event.type === "history_keyboard_self_control" ||
+    event.type === "profile_self_control"
+  )) {
     slugs.add("self-control");
   }
   if (hasWatchedWithoutSending(events, sent)) {

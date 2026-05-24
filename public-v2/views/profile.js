@@ -16,8 +16,6 @@ const MONTHS = [
   ["11", "Nov"],
   ["12", "Dec"],
 ];
-let profileOpenedWoodableFriend = null;
-let profileSentWood = false;
 
 export async function openProfile(ctx, userId) {
   const { api, render } = ctx;
@@ -26,15 +24,9 @@ export async function openProfile(ctx, userId) {
   state.profileData = null;
   state.profileError = "";
   state.profileNotice = "";
-  profileOpenedWoodableFriend = null;
-  profileSentWood = false;
   render();
   try {
     state.profileData = await api(`/api/profiles/${userId}`);
-    profileOpenedWoodableFriend = !state.profileData.isSelf && state.profileData.friendship?.wood?.canWood
-      ? userId
-      : null;
-    profileSentWood = false;
     render();
   } catch (err) {
     state.profileError = humanErr(err.message);
@@ -65,7 +57,6 @@ export function renderProfile(ctx) {
   `;
 
   document.querySelector("#back-btn")?.addEventListener("click", () => {
-    recordProfileSelfControl(ctx);
     state.view = "home";
     state.profileData = null;
     state.profileError = "";
@@ -80,7 +71,6 @@ export function renderProfile(ctx) {
   bindProfileDirtyState();
 
   document.querySelector("[data-profile-action='history']")?.addEventListener("click", () => {
-    recordProfileSelfControl(ctx);
     ctx.openHistory(state.profileUserId);
   });
   document.querySelector("[data-profile-action='mute']")?.addEventListener("click", async (event) => {
@@ -327,7 +317,6 @@ async function friendAction(ctx, action, { backHome = false } = {}) {
 async function sendBirthdayWood(ctx) {
   const { api, render } = ctx;
   try {
-    profileSentWood = true;
     state.data = await api(`/api/friends/${state.profileUserId}/wood`, {
       method: "POST",
       body: { birthday: true },
@@ -339,16 +328,6 @@ async function sendBirthdayWood(ctx) {
     state.profileError = humanErr(err.message);
     render();
   }
-}
-
-function recordProfileSelfControl(ctx) {
-  if (!profileOpenedWoodableFriend || profileSentWood) return;
-  const friendId = profileOpenedWoodableFriend;
-  profileOpenedWoodableFriend = null;
-  ctx.api("/api/achievement-events", {
-    method: "POST",
-    body: { type: "profile_self_control", friendId },
-  }).catch(() => {});
 }
 
 function initial(username) {

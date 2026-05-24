@@ -1201,6 +1201,8 @@ html, body {
   border-radius: var(--radius-pill);
   background: rgba(8, 23, 11, 0.24);
   overflow: hidden;
+  opacity: 0;
+  transition: opacity 120ms ease;
 }
 
 .long-meter i {
@@ -1218,6 +1220,14 @@ html, body {
   font-size: 11px;
   font-style: normal;
   font-weight: 850;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.wood-key.charging .long-meter,
+.wood-key.failed .long-meter,
+.wood-key.charging .long-stage,
+.wood-key.failed .long-stage {
   opacity: 0.74;
 }
 
