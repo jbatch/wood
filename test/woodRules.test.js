@@ -34,7 +34,7 @@ import {
   groupInviteNotification,
   inviteUsedNotification,
 } from "../src/eventNotifications.js";
-import { cleanUsername, isValidUsername } from "../src/usernames.js";
+import { cleanUsername, isValidUsername, usernameKey } from "../src/usernames.js";
 
 function dbWithWoods(woods = []) {
   return {
@@ -66,9 +66,11 @@ test("a user can wood an accepted friend with no prior outgoing wood", () => {
 });
 
 test("usernames allow dotted friend handles", () => {
-  assert.equal(cleanUsername(" YNG.RAT.BOI "), "yng.rat.boi");
+  assert.equal(cleanUsername(" YNG.RAT.BOI "), "YNG.RAT.BOI");
   assert.equal(isValidUsername("yng.rat.boi"), true);
+  assert.equal(isValidUsername("Yng.Rat.Boi"), true);
   assert.equal(isValidUsername("yng-rat_boi"), true);
+  assert.equal(usernameKey("Yng.Rat.Boi"), usernameKey("yng.rat.boi"));
   assert.equal(isValidUsername("no"), false);
   assert.equal(isValidUsername("rat boi"), false);
 });

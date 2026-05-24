@@ -65,7 +65,7 @@ import {
 import { notifyUser, pushPublicConfig } from "./push.js";
 import { serveStatic } from "./static.js";
 import { debugEntries, debugLog, endpointHost } from "./debugLog.js";
-import { cleanUsername, isValidUsername } from "./usernames.js";
+import { cleanUsername, isValidUsername, usernameKey } from "./usernames.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "..", config.ui === "v2" ? "public-v2" : "public");
@@ -383,7 +383,7 @@ function currentUserFromId(userId) {
 
 async function login(req, res, body) {
   const username = cleanUsername(body.username);
-  const user = store.db.users.find((candidate) => candidate.username === username);
+  const user = store.db.users.find((candidate) => sameUsername(candidate.username, username));
   if (!user || !(await verifyPassword(String(body.password || ""), user.password_hash))) {
     sendJson(res, 401, { error: "invalid_credentials" });
     return;
@@ -426,7 +426,7 @@ async function signup(req, res, body) {
     if (!isInviteUsable(invite)) {
       return { error: "invalid_invite" };
     }
-    if (db.users.some((user) => user.username === username)) {
+    if (db.users.some((user) => sameUsername(user.username, username))) {
       return { error: "username_taken" };
     }
     if (db.users.some((user) => user.email === email)) {
@@ -616,7 +616,11 @@ async function updateProfile(user, res, body) {
   }
 
   const result = await store.write((db) => {
-    if (db.users.some((candidate) => candidate.id !== user.id && candidate.username === username)) {
+    if (
+      db.users.some(
+        (candidate) => candidate.id !== user.id && sameUsername(candidate.username, username),
+      )
+    ) {
       return { error: "username_taken" };
     }
     const fresh = db.users.find((candidate) => candidate.id === user.id);
@@ -797,7 +801,7 @@ async function respondToGroupInvite(user, res, membershipId, action) {
 async function requestFriend(user, res, body) {
   const username = cleanUsername(body.username);
   const result = await store.write((db) => {
-    const recipient = db.users.find((candidate) => candidate.username === username);
+    const recipient = db.users.find((candidate) => sameUsername(candidate.username, username));
     if (!recipient || recipient.suspended || recipient.id === user.id) {
       return { error: "not_found" };
     }
@@ -1646,6 +1650,10 @@ function cleanFavouriteWood(value) {
   const clean = String(value || "").trim().toLowerCase();
   if (!clean) return "";
   return FAVOURITE_WOODS.includes(clean) ? clean : null;
+}
+
+function sameUsername(left, right) {
+  return usernameKey(left) === usernameKey(right);
 }
 
 function cleanBirthday(body) {
