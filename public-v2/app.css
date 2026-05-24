@@ -1381,7 +1381,7 @@ html, body {
 }
 
 .profile-scroll {
-  padding: 16px 16px calc(28px + var(--safe-bottom));
+  padding: 16px 16px calc(112px + var(--safe-bottom));
 }
 
 .profile-hero {
