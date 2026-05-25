@@ -644,6 +644,21 @@ test("a mutual exchange starts a pair streak", () => {
   );
 });
 
+test("a same-day first mutual exchange counts even before the current wood is stored", () => {
+  const db = dbWithWoods([
+    {
+      sender_id: "a",
+      recipient_id: "b",
+      sent_at: "2026-05-22T00:00:00.000Z",
+    },
+  ]);
+
+  const result = updatePairStreakAfterWood(db, "b", "a", "2026-05-22T00:05:00.000Z");
+
+  assert.equal(result.incremented, true);
+  assert.equal(result.streak.current_streak, 1);
+});
+
 test("mutual exchanges on consecutive local days increment a pair streak", () => {
   const db = dbWithWoods([
     {

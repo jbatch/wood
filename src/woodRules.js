@@ -161,7 +161,7 @@ export function updatePairStreakAfterWood(db, senderId, recipientId, sentAt = ne
     sent_at: new Date(nowMs).toISOString(),
   };
   const previous = pairStreakState(db, senderId, recipientId, nowMs, { exclude: currentWood });
-  const next = pairStreakState(db, senderId, recipientId, nowMs);
+  const next = pairStreakState(db, senderId, recipientId, nowMs, { include: currentWood });
   const previousCount = previous.current_streak;
   const previousLastExchangeAt = previous.last_exchange_at;
 
@@ -349,7 +349,7 @@ function favouriteWooder(db, userId, friendIds) {
 function pairStreakState(db, a, b, now, options = {}) {
   const today = localDateKey(now);
   const yesterday = addDateKey(today, -1);
-  const mutualDays = mutualExchangeDays(db, a, b, toMs(now), options.exclude);
+  const mutualDays = mutualExchangeDays(db, a, b, toMs(now), options);
   let longest = 0;
   let run = 0;
   let previousKey = null;
@@ -373,13 +373,17 @@ function pairStreakState(db, a, b, now, options = {}) {
   };
 }
 
-function mutualExchangeDays(db, a, b, nowMs, exclude) {
+function mutualExchangeDays(db, a, b, nowMs, options = {}) {
   const days = new Map();
   let skippedExcluded = false;
 
-  for (const wood of woodsBetween(db, a, b)) {
+  const woods = options.include
+    ? [...woodsBetween(db, a, b), options.include]
+    : woodsBetween(db, a, b);
+
+  for (const wood of woods) {
     if (toMs(wood.sent_at) > nowMs) continue;
-    if (!skippedExcluded && matchesExcludedWood(wood, exclude)) {
+    if (!skippedExcluded && matchesExcludedWood(wood, options.exclude)) {
       skippedExcluded = true;
       continue;
     }
