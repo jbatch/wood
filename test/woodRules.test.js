@@ -15,6 +15,7 @@ import {
   canSendWood,
   notificationStyles,
   pairStats,
+  rebuildStreaksFromWoods,
   updatePairStreakAfterWood,
   userStats,
   visibleStreak,
@@ -387,20 +388,34 @@ test("reply achievements are tied to the current Wood", () => {
   assert.equal(slugs.includes("fashionably-late"), false);
 });
 
-test("fashionably late requires saving a streak just before it breaks", () => {
+test("fashionably late requires completing a streak just before midnight", () => {
   const onTime = dbWithWoods([
+    {
+      id: "previous_outgoing",
+      sender_id: "a",
+      recipient_id: "b",
+      sent_at: "2026-05-22T14:50:00.000Z",
+      type: "normal",
+    },
+    {
+      id: "previous_incoming",
+      sender_id: "b",
+      recipient_id: "a",
+      sent_at: "2026-05-22T15:00:00.000Z",
+      type: "normal",
+    },
     {
       id: "incoming",
       sender_id: "b",
       recipient_id: "a",
-      sent_at: "2026-05-23T23:50:00.000Z",
+      sent_at: "2026-05-23T15:50:00.000Z",
       type: "normal",
     },
     {
       id: "current",
       sender_id: "a",
       recipient_id: "b",
-      sent_at: "2026-05-23T23:56:00.000Z",
+      sent_at: "2026-05-23T15:56:00.000Z",
       type: "normal",
     },
   ]);
@@ -408,23 +423,23 @@ test("fashionably late requires saving a streak just before it breaks", () => {
     id: "streak_1",
     user_a_id: "a",
     user_b_id: "b",
-    current_streak: 2,
-    longest_streak: 2,
-    last_exchange_at: "2026-05-22T00:00:00.000Z",
+    current_streak: 1,
+    longest_streak: 1,
+    last_exchange_at: "2026-05-22T15:00:00.000Z",
     at_risk: true,
     milestones_sent: [],
-    updated_at: "2026-05-22T00:00:00.000Z",
+    updated_at: "2026-05-22T15:00:00.000Z",
   });
   ensureAchievementDefinitions(onTime);
   const onTimeStreakResult = updatePairStreakAfterWood(
     onTime,
     "a",
     "b",
-    onTime.woods[1].sent_at,
+    onTime.woods[3].sent_at,
   );
 
   const onTimeSlugs = evaluateAchievements(onTime, "a", {
-    wood: onTime.woods[1],
+    wood: onTime.woods[3],
     streakResult: onTimeStreakResult,
   })
     .map((achievement) => achievement.slug);
@@ -435,17 +450,31 @@ test("fashionably late requires saving a streak just before it breaks", () => {
 
   const tooLate = dbWithWoods([
     {
+      id: "previous_outgoing",
+      sender_id: "a",
+      recipient_id: "b",
+      sent_at: "2026-05-22T14:50:00.000Z",
+      type: "normal",
+    },
+    {
+      id: "previous_incoming",
+      sender_id: "b",
+      recipient_id: "a",
+      sent_at: "2026-05-22T15:00:00.000Z",
+      type: "normal",
+    },
+    {
       id: "incoming",
       sender_id: "b",
       recipient_id: "a",
-      sent_at: "2026-05-24T00:00:00.000Z",
+      sent_at: "2026-05-23T16:00:00.000Z",
       type: "normal",
     },
     {
       id: "current",
       sender_id: "a",
       recipient_id: "b",
-      sent_at: "2026-05-24T00:01:00.000Z",
+      sent_at: "2026-05-23T16:01:00.000Z",
       type: "normal",
     },
   ]);
@@ -453,23 +482,23 @@ test("fashionably late requires saving a streak just before it breaks", () => {
     id: "streak_1",
     user_a_id: "a",
     user_b_id: "b",
-    current_streak: 2,
-    longest_streak: 2,
-    last_exchange_at: "2026-05-22T00:00:00.000Z",
+    current_streak: 1,
+    longest_streak: 1,
+    last_exchange_at: "2026-05-22T15:00:00.000Z",
     at_risk: true,
     milestones_sent: [],
-    updated_at: "2026-05-22T00:00:00.000Z",
+    updated_at: "2026-05-22T15:00:00.000Z",
   });
   ensureAchievementDefinitions(tooLate);
   const tooLateStreakResult = updatePairStreakAfterWood(
     tooLate,
     "a",
     "b",
-    tooLate.woods[1].sent_at,
+    tooLate.woods[3].sent_at,
   );
 
   const tooLateSlugs = evaluateAchievements(tooLate, "a", {
-    wood: tooLate.woods[1],
+    wood: tooLate.woods[3],
     streakResult: tooLateStreakResult,
   })
     .map((achievement) => achievement.slug);
@@ -615,6 +644,120 @@ test("a mutual exchange starts a pair streak", () => {
   );
 });
 
+test("mutual exchanges on consecutive local days increment a pair streak", () => {
+  const db = dbWithWoods([
+    {
+      sender_id: "a",
+      recipient_id: "b",
+      sent_at: "2026-05-22T15:20:00.000Z",
+    },
+    {
+      sender_id: "b",
+      recipient_id: "a",
+      sent_at: "2026-05-22T15:30:00.000Z",
+    },
+    {
+      sender_id: "a",
+      recipient_id: "b",
+      sent_at: "2026-05-22T16:05:00.000Z",
+    },
+    {
+      sender_id: "b",
+      recipient_id: "a",
+      sent_at: "2026-05-22T16:10:00.000Z",
+    },
+  ]);
+
+  const result = updatePairStreakAfterWood(db, "b", "a", "2026-05-22T16:10:00.000Z");
+
+  assert.equal(result.incremented, true);
+  assert.equal(result.streak.current_streak, 2);
+});
+
+test("extra mutual woods on the same local day do not increment again", () => {
+  const db = dbWithWoods([
+    {
+      sender_id: "a",
+      recipient_id: "b",
+      sent_at: "2026-05-22T00:00:00.000Z",
+    },
+    {
+      sender_id: "b",
+      recipient_id: "a",
+      sent_at: "2026-05-22T00:05:00.000Z",
+    },
+    {
+      sender_id: "a",
+      recipient_id: "b",
+      sent_at: "2026-05-22T00:10:00.000Z",
+    },
+  ]);
+
+  updatePairStreakAfterWood(db, "b", "a", "2026-05-22T00:05:00.000Z");
+  const result = updatePairStreakAfterWood(db, "a", "b", "2026-05-22T00:10:00.000Z");
+
+  assert.equal(result.incremented, false);
+  assert.equal(result.streak.current_streak, 1);
+});
+
+test("rebuilding streaks backfills mutual local-day counts", () => {
+  const db = dbWithWoods([
+    {
+      id: "wood_1",
+      sender_id: "a",
+      recipient_id: "b",
+      sent_at: "2026-05-22T15:20:00.000Z",
+      streak_incremented: false,
+      streak_count_after: null,
+    },
+    {
+      id: "wood_2",
+      sender_id: "b",
+      recipient_id: "a",
+      sent_at: "2026-05-22T15:30:00.000Z",
+      streak_incremented: false,
+      streak_count_after: null,
+    },
+    {
+      id: "wood_3",
+      sender_id: "a",
+      recipient_id: "b",
+      sent_at: "2026-05-22T16:05:00.000Z",
+      streak_incremented: false,
+      streak_count_after: null,
+    },
+    {
+      id: "wood_4",
+      sender_id: "b",
+      recipient_id: "a",
+      sent_at: "2026-05-22T16:10:00.000Z",
+      streak_incremented: false,
+      streak_count_after: null,
+    },
+  ]);
+  db.streaks.push({
+    id: "streak_1",
+    user_a_id: "a",
+    user_b_id: "b",
+    current_streak: 99,
+    longest_streak: 99,
+    last_exchange_at: "2026-05-22T00:00:00.000Z",
+    at_risk: false,
+    milestones_sent: [7],
+    updated_at: "2026-05-22T00:00:00.000Z",
+  });
+
+  rebuildStreaksFromWoods(db);
+
+  assert.equal(db.streaks[0].current_streak, 2);
+  assert.equal(db.streaks[0].longest_streak, 2);
+  assert.deepEqual(db.streaks[0].milestones_sent, [7]);
+  assert.equal(db.woods[1].streak_incremented, true);
+  assert.equal(db.woods[1].streak_count_after, 1);
+  assert.equal(db.woods[3].streak_incremented, true);
+  assert.equal(db.woods[3].streak_count_after, 2);
+});
+
 test("one-sided woods do not increment a streak", () => {
   const db = dbWithWoods([
     {
@@ -630,7 +773,7 @@ test("one-sided woods do not increment a streak", () => {
   assert.equal(result.streak.current_streak, 0);
 });
 
-test("a stale streak breaks after forty eight hours without mutual exchange", () => {
+test("a stale streak breaks after a missed local day without mutual exchange", () => {
   const db = dbWithWoods();
   db.streaks.push({
     id: "streak_1",
@@ -651,7 +794,7 @@ test("a stale streak breaks after forty eight hours without mutual exchange", ()
   assert.equal(streak.at_risk, false);
 });
 
-test("a streak is at risk after twenty hours without a mutual exchange", () => {
+test("a streak is at risk on the next local day without a mutual exchange", () => {
   const db = dbWithWoods();
   db.streaks.push({
     id: "streak_1",

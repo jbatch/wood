@@ -2,12 +2,10 @@ export const LONG_WOOD_MAX_MS = 10000;
 export const LONG_WOOD_FAIL_MS = 11000;
 export const LONG_WOOD_MIN_MS = 2000;
 export const LONG_WOOD_MAX_LABEL_MS = 9250;
-const STREAK_WINDOW_MS = 24 * 60 * 60 * 1000;
-const STREAK_INCREMENT_MIN_MS = 20 * 60 * 60 * 1000;
-const STREAK_BREAK_MS = 48 * 60 * 60 * 1000;
 const STREAK_MILESTONES = [7, 30, 100, 365];
 
 import { id } from "./ids.js";
+import { config } from "./config.js";
 import {
   WOOD_NOTIFICATION_BODIES,
   WOOD_NOTIFICATION_PRESETS,
@@ -157,44 +155,20 @@ export function updatePairStreakAfterWood(db, senderId, recipientId, sentAt = ne
   db.streaks ||= [];
   const nowMs = toMs(sentAt);
   const streak = ensurePairStreak(db, senderId, recipientId, sentAt);
-  refreshStreak(streak, nowMs);
+  const currentWood = {
+    sender_id: senderId,
+    recipient_id: recipientId,
+    sent_at: new Date(nowMs).toISOString(),
+  };
+  const previous = pairStreakState(db, senderId, recipientId, nowMs, { exclude: currentWood });
+  const next = pairStreakState(db, senderId, recipientId, nowMs);
+  const previousCount = previous.current_streak;
+  const previousLastExchangeAt = previous.last_exchange_at;
 
-  const opposite = latestWoodBetween(
-    db,
-    recipientId,
-    senderId,
-    (wood) => toMs(wood.sent_at) <= nowMs,
-  );
-  const lastExchangeMs = streak.last_exchange_at ? toMs(streak.last_exchange_at) : null;
-  const previousCount = streak.current_streak;
-  const previousLastExchangeAt = streak.last_exchange_at;
-  const hasNewOpposite =
-    opposite &&
-    (!lastExchangeMs || toMs(opposite.sent_at) > lastExchangeMs) &&
-    nowMs - toMs(opposite.sent_at) <= STREAK_WINDOW_MS;
-
-  if (!hasNewOpposite) {
-    streak.at_risk = isAtRisk(streak, nowMs);
-    streak.updated_at = new Date(nowMs).toISOString();
-    return {
-      streak,
-      incremented: false,
-      milestone: null,
-      previousCount,
-      previousLastExchangeAt,
-      sentAt: new Date(nowMs).toISOString(),
-    };
-  }
-
-  if (!lastExchangeMs || nowMs - lastExchangeMs > STREAK_BREAK_MS) {
-    streak.current_streak = 1;
-  } else if (nowMs - lastExchangeMs >= STREAK_INCREMENT_MIN_MS) {
-    streak.current_streak += 1;
-  }
-
-  streak.longest_streak = Math.max(streak.longest_streak, streak.current_streak);
-  streak.last_exchange_at = new Date(nowMs).toISOString();
-  streak.at_risk = false;
+  streak.current_streak = next.current_streak;
+  streak.longest_streak = next.longest_streak;
+  streak.last_exchange_at = next.last_exchange_at;
+  streak.at_risk = next.at_risk;
   streak.updated_at = new Date(nowMs).toISOString();
 
   const incremented = streak.current_streak > previousCount;
@@ -210,15 +184,19 @@ export function updatePairStreakAfterWood(db, senderId, recipientId, sentAt = ne
 }
 
 export function rebuildStreaksFromWoods(db) {
-  const longestByPair = new Map((db.streaks || []).map((streak) => [
+  const milestonesByPair = new Map((db.streaks || []).map((streak) => [
     pairKey(streak.user_a_id, streak.user_b_id),
-    Number(streak.longest_streak || 0),
+    Array.isArray(streak.milestones_sent) ? streak.milestones_sent : [],
   ]));
   db.streaks = [];
   const woods = [...(db.woods || [])].sort((a, b) => toMs(a.sent_at) - toMs(b.sent_at));
+  const replayDb = { ...db, woods: [], streaks: [] };
   for (const wood of woods) {
+    wood.streak_incremented = false;
+    wood.streak_count_after = null;
+    replayDb.woods.push(wood);
     const result = updatePairStreakAfterWood(
-      db,
+      replayDb,
       wood.sender_id,
       wood.recipient_id,
       wood.sent_at,
@@ -228,9 +206,9 @@ export function rebuildStreaksFromWoods(db) {
       wood.streak_count_after = result.streak.current_streak;
     }
   }
+  db.streaks = replayDb.streaks;
   for (const streak of db.streaks) {
-    const longest = longestByPair.get(pairKey(streak.user_a_id, streak.user_b_id)) || 0;
-    streak.longest_streak = Math.max(streak.longest_streak, longest);
+    streak.milestones_sent = milestonesByPair.get(pairKey(streak.user_a_id, streak.user_b_id)) || [];
   }
 }
 
@@ -331,19 +309,18 @@ function refreshStreak(streak, now) {
     streak.at_risk = false;
     return;
   }
-  const ageMs = toMs(now) - toMs(streak.last_exchange_at);
-  if (ageMs > STREAK_BREAK_MS) {
+  const today = localDateKey(now);
+  const lastExchangeDay = localDateKey(streak.last_exchange_at);
+  if (lastExchangeDay === today) {
+    streak.at_risk = false;
+    return;
+  }
+  if (lastExchangeDay !== addDateKey(today, -1)) {
     streak.current_streak = 0;
     streak.at_risk = false;
     return;
   }
-  streak.at_risk = isAtRisk(streak, now);
-}
-
-function isAtRisk(streak, now) {
-  if (!streak.current_streak || !streak.last_exchange_at) return false;
-  const ageMs = toMs(now) - toMs(streak.last_exchange_at);
-  return ageMs >= STREAK_INCREMENT_MIN_MS && ageMs <= STREAK_BREAK_MS;
+  streak.at_risk = Boolean(streak.current_streak);
 }
 
 function nextMilestone(streak) {
@@ -369,15 +346,87 @@ function favouriteWooder(db, userId, friendIds) {
   return best;
 }
 
-function latestWoodBetween(db, senderId, recipientId, predicate = () => true) {
-  return db.woods
-    .filter(
-      (wood) =>
-        wood.sender_id === senderId &&
-        wood.recipient_id === recipientId &&
-        predicate(wood),
-    )
-    .sort((a, b) => toMs(b.sent_at) - toMs(a.sent_at))[0];
+function pairStreakState(db, a, b, now, options = {}) {
+  const today = localDateKey(now);
+  const yesterday = addDateKey(today, -1);
+  const mutualDays = mutualExchangeDays(db, a, b, toMs(now), options.exclude);
+  let longest = 0;
+  let run = 0;
+  let previousKey = null;
+  let latest = null;
+
+  for (const day of mutualDays) {
+    if (day.key > today) continue;
+    run = previousKey && day.key === addDateKey(previousKey, 1) ? run + 1 : 1;
+    longest = Math.max(longest, run);
+    latest = { ...day, run };
+    previousKey = day.key;
+  }
+
+  const isCurrent = latest && (latest.key === today || latest.key === yesterday);
+  const current_streak = isCurrent ? latest.run : 0;
+  return {
+    current_streak,
+    longest_streak: longest,
+    last_exchange_at: latest?.latest_at || null,
+    at_risk: Boolean(current_streak && latest.key === yesterday),
+  };
+}
+
+function mutualExchangeDays(db, a, b, nowMs, exclude) {
+  const days = new Map();
+  let skippedExcluded = false;
+
+  for (const wood of woodsBetween(db, a, b)) {
+    if (toMs(wood.sent_at) > nowMs) continue;
+    if (!skippedExcluded && matchesExcludedWood(wood, exclude)) {
+      skippedExcluded = true;
+      continue;
+    }
+
+    const key = localDateKey(wood.sent_at);
+    const day = days.get(key) || {
+      key,
+      a_to_b: false,
+      b_to_a: false,
+      latest_at: null,
+    };
+    if (wood.sender_id === a && wood.recipient_id === b) day.a_to_b = true;
+    if (wood.sender_id === b && wood.recipient_id === a) day.b_to_a = true;
+    if (!day.latest_at || toMs(wood.sent_at) > toMs(day.latest_at)) {
+      day.latest_at = new Date(toMs(wood.sent_at)).toISOString();
+    }
+    days.set(key, day);
+  }
+
+  return [...days.values()]
+    .filter((day) => day.a_to_b && day.b_to_a)
+    .sort((left, right) => left.key.localeCompare(right.key));
+}
+
+function matchesExcludedWood(wood, exclude) {
+  if (!exclude) return false;
+  if (exclude.id && wood.id === exclude.id) return true;
+  return wood.sender_id === exclude.sender_id &&
+    wood.recipient_id === exclude.recipient_id &&
+    toMs(wood.sent_at) === toMs(exclude.sent_at);
+}
+
+function localDateKey(value, timeZone = config.timeZone) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(toMs(value)));
+  const part = (type) => parts.find((item) => item.type === type)?.value;
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+function addDateKey(key, days) {
+  const date = new Date(`${key}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
 }
 
 function woodsBetween(db, a, b) {

@@ -3,7 +3,6 @@ import { config } from "./config.js";
 
 const SPEEDY_REPLY_MS = 10 * 1000;
 const LATE_REPLY_WINDOW_MS = 5 * 60 * 1000;
-const STREAK_BREAK_MS = 48 * 60 * 60 * 1000;
 const LONG_GAP_MS = 30 * 24 * 60 * 60 * 1000;
 const ORBIT_WINDOW_MS = 10 * 60 * 1000;
 const CHAIN_WINDOW_MS = 60 * 1000;
@@ -268,7 +267,7 @@ export const ACHIEVEMENTS = [
   {
     slug: "fashionably-late",
     name: "Fashionably Late",
-    description: "Save a streak just before it breaks",
+    description: "Complete a streak just before midnight",
     icon: "late",
     criteria_type: "special",
     criteria_value: "fashionably_late",
@@ -913,6 +912,25 @@ function localDateKey(iso, timeZone = config.timeZone) {
   return `${value("year")}-${value("month")}-${value("day")}`;
 }
 
+function addDateKey(key, days) {
+  const date = new Date(`${key}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function msUntilNextLocalDay(iso, timeZone = config.timeZone) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour: "numeric",
+    minute: "numeric",
+    second: "numeric",
+    hourCycle: "h23",
+  }).formatToParts(new Date(iso));
+  const value = (type) => Number(parts.find((part) => part.type === type)?.value || 0);
+  const elapsedMs = ((value("hour") * 60 + value("minute")) * 60 + value("second")) * 1000;
+  return 24 * 60 * 60 * 1000 - elapsedMs;
+}
+
 function localWeekday(iso, timeZone = config.timeZone) {
   const key = localDateKey(iso, timeZone);
   const day = new Date(`${key}T00:00:00.000Z`).getUTCDay();
@@ -954,9 +972,11 @@ function savedStreakAtLastMinute(streakResult) {
   if (!streakResult.previousCount) return false;
   if (!streakResult.previousLastExchangeAt) return false;
 
-  const ageMs = Date.parse(streakResult.sentAt) - Date.parse(streakResult.previousLastExchangeAt);
-  const lateStartMs = STREAK_BREAK_MS - LATE_REPLY_WINDOW_MS;
-  return ageMs >= lateStartMs && ageMs <= STREAK_BREAK_MS;
+  const sentDay = localDateKey(streakResult.sentAt);
+  const previousDay = localDateKey(streakResult.previousLastExchangeAt);
+  if (sentDay !== addDateKey(previousDay, 1)) return false;
+
+  return msUntilNextLocalDay(streakResult.sentAt) <= LATE_REPLY_WINDOW_MS;
 }
 
 function currentReplyDeltaMs(db, userId, wood) {

@@ -9,6 +9,8 @@ import { id, inviteCode } from "./ids.js";
 import { addDaysIso, nowIso } from "./time.js";
 import { rebuildStreaksFromWoods } from "./woodRules.js";
 
+const STREAK_MODEL = "mutual-local-day-v1";
+
 const initialConfig = {
   cooldown_hours: 24,
   seasonal_enabled: true,
@@ -55,8 +57,15 @@ export async function createStore(file = config.dbFile) {
   };
 
   await seedFirstAdmin(store);
-  if (store.db.woods.length && !store.db.streaks.length) {
-    await store.write((db) => rebuildStreaksFromWoods(db));
+  if (store.db.woods.length && store.db.config.streak_model !== STREAK_MODEL) {
+    await store.write((db) => {
+      rebuildStreaksFromWoods(db);
+      db.config.streak_model = STREAK_MODEL;
+    });
+  } else if (!store.db.config.streak_model) {
+    await store.write((db) => {
+      db.config.streak_model = STREAK_MODEL;
+    });
   }
   await store.write((db) => ensureAchievementDefinitions(db));
   store.db = loadSnapshot(sqlite);
