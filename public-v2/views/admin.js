@@ -50,6 +50,8 @@ function adminPanelHtml() {
   if (state.adminTab === "invites") return adminInvitesHtml();
   if (state.adminTab === "users") return adminUsersHtml();
   if (state.adminTab === "groups") return adminGroupsHtml();
+  if (state.adminTab === "achievements") return adminAchievementsHtml();
+  if (state.adminTab === "bugs") return adminBugsHtml();
   if (state.adminTab === "debug") return adminDebugHtml();
   return adminOverviewHtml();
 }
@@ -60,6 +62,8 @@ function adminNavHtml() {
     ["invites", "＋", "Invites"],
     ["users", "◆", "Users"],
     ["groups", "◎", "Groups"],
+    ["achievements", "◇", "Ach"],
+    ["bugs", "!", "Bugs"],
     ["debug", "⋯", "Debug"],
   ];
   return `
@@ -292,6 +296,107 @@ function adminGroupToolsHtml(group) {
   `;
 }
 
+function adminAchievementsHtml() {
+  const achievements = state.admin.achievement_stats || [];
+  const selected = achievements.find((achievement) => achievement.slug === state.adminAchievementSlug);
+  if (selected) return adminAchievementDetailHtml(selected);
+  return `
+    <div class="section-head">Achievements</div>
+    <div class="admin-list">
+      ${achievements.map(achievementStatCardHtml).join("")}
+    </div>
+  `;
+}
+
+function achievementStatCardHtml(achievement) {
+  const hidden = achievement.secret ? "secret" : achievement.category || "individual";
+  return `
+    <button class="admin-card admin-card-button achievement-stat-card" type="button" data-achievement-detail="${escHtml(achievement.slug)}">
+      <div class="achievement-icon small-icon">${escHtml(achievement.icon)}</div>
+      <div class="admin-card-main">
+        <div class="admin-title">${escHtml(achievement.name)}</div>
+        <div class="admin-sub">${escHtml(achievement.description)}</div>
+        <div class="admin-meta">${achievement.earned_count || 0} earned · ${escHtml(hidden)}</div>
+      </div>
+    </button>
+  `;
+}
+
+function adminAchievementDetailHtml(achievement) {
+  return `
+    <div class="section-head with-back">
+      <button class="chip-btn" type="button" data-achievement-back>Back</button>
+      <span>${escHtml(achievement.name)}</span>
+    </div>
+    <div class="admin-card achievement-detail-card">
+      <div class="achievement-icon">${escHtml(achievement.icon)}</div>
+      <div class="admin-card-main">
+        <div class="admin-title">${escHtml(achievement.name)}</div>
+        <div class="admin-sub">${escHtml(achievement.description)}</div>
+        <div class="admin-meta">${achievement.earned_count || 0} users have this</div>
+      </div>
+    </div>
+    <div class="admin-list">
+      ${achievement.users?.length ? achievement.users.map((user) => `
+        <div class="admin-card compact-admin-card">
+          <div class="admin-card-main">
+            <div class="admin-title">${escHtml(user.username)}</div>
+            <div class="admin-meta">Earned ${formatDate(user.earned_at)}</div>
+          </div>
+        </div>
+      `).join("") : `<div class="empty-state small-empty"><p>No one has this yet</p></div>`}
+    </div>
+  `;
+}
+
+function adminBugsHtml() {
+  const reports = state.admin.bug_reports || [];
+  const open = reports.filter((report) => report.status === "open");
+  const closed = reports.filter((report) => report.status !== "open");
+  return `
+    <div class="section-head">Open Bugs</div>
+    <div class="admin-list">
+      ${open.length ? open.map(bugReportCardHtml).join("") : `<div class="empty-state small-empty"><p>No open bugs. Suspicious.</p></div>`}
+    </div>
+    <div class="section-head">Closed Bugs</div>
+    <div class="admin-list">
+      ${closed.length ? closed.slice(0, 30).map(bugReportCardHtml).join("") : `<div class="empty-state small-empty"><p>No closed bugs yet</p></div>`}
+    </div>
+  `;
+}
+
+function bugReportCardHtml(report) {
+  const reporter = report.user || {};
+  const isOpen = report.status === "open";
+  const blocked = Boolean((state.admin.users || []).find((user) => user.id === reporter.id)?.bug_reports_blocked_at);
+  return `
+    <div class="admin-card bug-report-card">
+      <div class="admin-card-main">
+        <div class="admin-title">
+          ${escHtml(reporter.username || "unknown")}
+          <span class="role-chip">${escHtml(report.status)}</span>
+        </div>
+        <div class="bug-report-text">${escHtml(report.text)}</div>
+        <div class="admin-meta">
+          Filed ${formatDate(report.created_at)}
+          ${report.closed_at ? ` · closed ${formatDate(report.closed_at)} by ${escHtml(report.closed_by?.username || "unknown")}` : ""}
+        </div>
+      </div>
+      <div class="admin-actions">
+        ${isOpen ? `
+          <button class="chip-btn accent" type="button" data-close-bug="${escHtml(report.id)}" data-bug-status="legitimate">Legit</button>
+          <button class="chip-btn" type="button" data-close-bug="${escHtml(report.id)}" data-bug-status="not_bug">Not bug</button>
+        ` : ""}
+        ${reporter.id ? `
+          <button class="chip-btn danger-chip" type="button" data-bug-user="${escHtml(reporter.id)}" data-bug-user-action="${blocked ? "unblock" : "block"}">
+            ${blocked ? "Allow bugs" : "Block bugs"}
+          </button>
+        ` : ""}
+      </div>
+    </div>
+  `;
+}
+
 function adminDebugHtml() {
   return `
     <div class="section-head">Push tools</div>
@@ -352,9 +457,20 @@ function bindAdmin(ctx) {
   });
   document.querySelectorAll("[data-admin-tab]").forEach((btn) => {
     btn.addEventListener("click", () => {
+      if (btn.dataset.adminTab !== "achievements") state.adminAchievementSlug = "";
       saveAdminTab(btn.dataset.adminTab);
       renderAdmin(ctx);
     });
+  });
+  document.querySelectorAll("[data-achievement-detail]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.adminAchievementSlug = btn.dataset.achievementDetail;
+      renderAdmin(ctx);
+    });
+  });
+  document.querySelector("[data-achievement-back]")?.addEventListener("click", () => {
+    state.adminAchievementSlug = "";
+    renderAdmin(ctx);
   });
   document.querySelector("[data-action='refresh-debug']")?.addEventListener("click", async () => {
     state.debug = await api("/api/admin/debug");
@@ -445,6 +561,25 @@ function bindAdmin(ctx) {
     btn.addEventListener("click", async () => {
       await copyText(btn.dataset.copyResetLink);
       state.error = "Reset link copied";
+      renderAdmin(ctx);
+    });
+  });
+  document.querySelectorAll("[data-close-bug]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      state.admin = await api(`/api/admin/bug-reports/${btn.dataset.closeBug}/close`, {
+        method: "POST",
+        body: { status: btn.dataset.bugStatus },
+      });
+      await loadApp();
+      renderAdmin(ctx);
+    });
+  });
+  document.querySelectorAll("[data-bug-user]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      state.admin = await api(`/api/admin/users/${btn.dataset.bugUser}/bug-reports/${btn.dataset.bugUserAction}`, {
+        method: "POST",
+      });
+      await loadApp();
       renderAdmin(ctx);
     });
   });

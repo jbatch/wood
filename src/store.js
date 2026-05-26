@@ -105,6 +105,7 @@ function migrate(sqlite) {
       notification_snoozed_until TEXT,
       groups_v2_notice_seen_at TEXT,
       groups_v2_tutorial_seen_at TEXT,
+      bug_reports_blocked_at TEXT,
       pwa_installed_at TEXT,
       pwa_last_seen_at TEXT,
       pwa_display_mode TEXT,
@@ -289,6 +290,19 @@ function migrate(sqlite) {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS bug_reports (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      text TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open',
+      created_at TEXT NOT NULL,
+      closed_at TEXT,
+      closed_by TEXT,
+      close_reason TEXT,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (closed_by) REFERENCES users(id) ON DELETE SET NULL
+    );
+
     CREATE TABLE IF NOT EXISTS app_config (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       config_json TEXT NOT NULL
@@ -304,6 +318,8 @@ function migrate(sqlite) {
       ON notifications(user_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_achievement_events_user_type_created
       ON achievement_events(user_id, type, created_at);
+    CREATE INDEX IF NOT EXISTS idx_bug_reports_status_created
+      ON bug_reports(status, created_at);
   `);
 
   ensureColumn(sqlite, "users", "deleted_at", "TEXT");
@@ -314,6 +330,7 @@ function migrate(sqlite) {
   ensureColumn(sqlite, "users", "notification_snoozed_until", "TEXT");
   ensureColumn(sqlite, "users", "groups_v2_notice_seen_at", "TEXT");
   ensureColumn(sqlite, "users", "groups_v2_tutorial_seen_at", "TEXT");
+  ensureColumn(sqlite, "users", "bug_reports_blocked_at", "TEXT");
   ensureColumn(sqlite, "users", "pwa_installed_at", "TEXT");
   ensureColumn(sqlite, "users", "pwa_last_seen_at", "TEXT");
   ensureColumn(sqlite, "users", "pwa_display_mode", "TEXT");
@@ -362,6 +379,7 @@ async function seedFirstAdmin(store) {
       notification_snoozed_until: null,
       groups_v2_notice_seen_at: null,
       groups_v2_tutorial_seen_at: null,
+      bug_reports_blocked_at: null,
       pwa_installed_at: null,
       pwa_last_seen_at: null,
       pwa_display_mode: null,
@@ -402,6 +420,7 @@ function loadSnapshot(sqlite) {
     achievements_def: sqlite.prepare("SELECT * FROM achievements_def ORDER BY rowid").all(),
     achievements_earned: sqlite.prepare("SELECT * FROM achievements_earned ORDER BY earned_at, id").all(),
     achievement_events: sqlite.prepare("SELECT * FROM achievement_events ORDER BY created_at, id").all(),
+    bug_reports: sqlite.prepare("SELECT * FROM bug_reports ORDER BY created_at, id").all(),
     config: configRow ? JSON.parse(configRow.config_json) : initialConfig,
   });
 }
@@ -418,6 +437,7 @@ function normalizeDb(db) {
       notification_snoozed_until: user.notification_snoozed_until || null,
       groups_v2_notice_seen_at: user.groups_v2_notice_seen_at || null,
       groups_v2_tutorial_seen_at: user.groups_v2_tutorial_seen_at || null,
+      bug_reports_blocked_at: user.bug_reports_blocked_at || null,
       pwa_installed_at: user.pwa_installed_at || null,
       pwa_last_seen_at: user.pwa_last_seen_at || null,
       pwa_display_mode: user.pwa_display_mode || null,
@@ -478,6 +498,13 @@ function normalizeDb(db) {
       subject_id: event.subject_id || null,
       meta_json: event.meta_json || "{}",
     })),
+    bug_reports: (db.bug_reports || []).map((report) => ({
+      ...report,
+      status: report.status || "open",
+      closed_at: report.closed_at || null,
+      closed_by: report.closed_by || null,
+      close_reason: report.close_reason || null,
+    })),
     config: { ...initialConfig, ...(db.config || {}) },
   };
 }
@@ -489,6 +516,7 @@ function persistSnapshot(sqlite, db) {
       DELETE FROM achievements_earned;
       DELETE FROM achievements_def;
       DELETE FROM achievement_events;
+      DELETE FROM bug_reports;
       DELETE FROM mutes;
       DELETE FROM streaks;
       DELETE FROM group_woods;
@@ -510,7 +538,7 @@ function persistSnapshot(sqlite, db) {
           id, username, email, password_hash, role, suspended, favourite_wood,
           birthday_month, birthday_day, birthday_visible, notification_snoozed_until,
           groups_v2_notice_seen_at, groups_v2_tutorial_seen_at,
-          pwa_installed_at, pwa_last_seen_at, pwa_display_mode,
+          bug_reports_blocked_at, pwa_installed_at, pwa_last_seen_at, pwa_display_mode,
           created_at, last_active_at, deleted_at
         )
       VALUES
@@ -518,7 +546,7 @@ function persistSnapshot(sqlite, db) {
           @id, @username, @email, @password_hash, @role, @suspended, @favourite_wood,
           @birthday_month, @birthday_day, @birthday_visible, @notification_snoozed_until,
           @groups_v2_notice_seen_at, @groups_v2_tutorial_seen_at,
-          @pwa_installed_at, @pwa_last_seen_at, @pwa_display_mode,
+          @bug_reports_blocked_at, @pwa_installed_at, @pwa_last_seen_at, @pwa_display_mode,
           @created_at, @last_active_at, @deleted_at
         )
     `);
@@ -530,6 +558,7 @@ function persistSnapshot(sqlite, db) {
         notification_snoozed_until: user.notification_snoozed_until || null,
         groups_v2_notice_seen_at: user.groups_v2_notice_seen_at || null,
         groups_v2_tutorial_seen_at: user.groups_v2_tutorial_seen_at || null,
+        bug_reports_blocked_at: user.bug_reports_blocked_at || null,
         pwa_installed_at: user.pwa_installed_at || null,
         pwa_last_seen_at: user.pwa_last_seen_at || null,
         pwa_display_mode: user.pwa_display_mode || null,
@@ -742,6 +771,22 @@ function persistSnapshot(sqlite, db) {
         ...event,
         subject_id: event.subject_id || null,
         meta_json: event.meta_json || "{}",
+      });
+    }
+
+    const insertBugReport = sqlite.prepare(`
+      INSERT INTO bug_reports
+        (id, user_id, text, status, created_at, closed_at, closed_by, close_reason)
+      VALUES
+        (@id, @user_id, @text, @status, @created_at, @closed_at, @closed_by, @close_reason)
+    `);
+    for (const report of snapshot.bug_reports) {
+      insertBugReport.run({
+        ...report,
+        status: report.status || "open",
+        closed_at: report.closed_at || null,
+        closed_by: report.closed_by || null,
+        close_reason: report.close_reason || null,
       });
     }
 

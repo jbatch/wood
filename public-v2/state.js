@@ -17,6 +17,7 @@ export const state = {
   homeTab: "friends",
   achievementTab: "individual",
   adminTab: "overview",
+  adminAchievementSlug: "",
   historyFriendId: null,
   historyData: null,
   profileUserId: null,
@@ -32,6 +33,8 @@ export const state = {
   addError: "",
   showGroupSheet: false,
   groupError: "",
+  showBugReportSheet: false,
+  bugReportText: "",
 };
 
 export const swipeOpen = new Set();

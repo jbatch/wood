@@ -1,7 +1,7 @@
 import { state } from "./state.js";
 
 const HOME_TABS = new Set(["friends", "stats", "groups", "settings"]);
-const ADMIN_TABS = new Set(["overview", "invites", "users", "groups", "debug"]);
+const ADMIN_TABS = new Set(["overview", "invites", "users", "groups", "achievements", "bugs", "debug"]);
 const HOME_TAB_KEY = "wood:v2:home-tab";
 const ADMIN_TAB_KEY = "wood:v2:admin-tab";
 
