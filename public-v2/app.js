@@ -98,6 +98,7 @@ async function loadApp() {
 }
 
 function render() {
+  state.deferredRender = false;
   if (location.pathname === "/reset-password") {
     renderAuth(ctx);
     return;
@@ -221,11 +222,11 @@ async function poll() {
     await refreshCurrentData();
     state.error = "";
     await refreshPushStatus();
-    if (location.pathname === "/admin") render();
-    else if (state.view === "home") render();
+    if (location.pathname === "/admin") autoRender();
+    else if (state.view === "home") autoRender();
     if (state.view === "history" && state.historyFriendId) {
       state.historyData = await api(`/api/friends/${state.historyFriendId}/woods`);
-      render();
+      autoRender();
       scrollHistoryToBottom();
     }
   } catch (err) {
@@ -262,6 +263,27 @@ function refreshAfterReturn() {
   poll();
 }
 
+function autoRender() {
+  if (activeControl()) {
+    state.deferredRender = true;
+    return;
+  }
+  render();
+}
+
+function activeControl() {
+  const active = document.activeElement;
+  if (!active || active === document.body || !app.contains(active)) return null;
+  return active.closest("input, select, textarea, [contenteditable='true']");
+}
+
+function flushDeferredRender() {
+  if (!state.deferredRender) return;
+  setTimeout(() => {
+    if (state.deferredRender && !activeControl()) render();
+  }, 0);
+}
+
 function showToast(message) {
   state.toast = message;
   clearTimeout(toastTimer);
@@ -275,5 +297,8 @@ function showToast(message) {
 window.addEventListener("popstate", render);
 
 setInterval(() => {
-  if (state.data && state.view === "home") render();
+  if (state.data && state.view === "home") autoRender();
 }, 60000);
+
+document.addEventListener("focusout", flushDeferredRender);
+document.addEventListener("change", flushDeferredRender);
