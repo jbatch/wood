@@ -1,5 +1,6 @@
 import { state } from "../state.js";
 import { markMileHighWoodAttempt } from "../api.js";
+import { restoreScrollPosition, saveScrollPosition } from "../ui/scrollState.js";
 import { countdown, escHtml, humanErr } from "../utils.js";
 
 const LONG_HOLD_ARM_MS = 450;
@@ -25,29 +26,23 @@ export async function openHistory(ctx, friendId) {
       method: "POST",
       body: { type: "history_view", friendId },
     }).catch(() => {});
-    render();
-    scrollHistoryToBottom();
+    renderHistory(ctx, { scrollToBottom: true });
   } catch (err) {
     state.error = humanErr(err.message);
     render();
   }
 }
 
-export function scrollHistoryToBottom() {
-  requestAnimationFrame(() => {
-    const el = document.querySelector(".history-messages");
-    if (el) el.scrollTop = el.scrollHeight;
-  });
-}
-
-export function renderHistory(ctx) {
+export function renderHistory(ctx, options = {}) {
   const { app, render } = ctx;
   const userId = state.data?.user?.id;
   const hd = state.historyData;
+  const scrollState = saveScrollPosition(".history-messages");
   const friend = currentHistoryFriend();
   const friendName = hd?.friend?.username
     || friend?.username
     || "friend";
+  const scrollKey = `history:${state.historyFriendId || "none"}`;
 
   app.innerHTML = `
     <div class="shell history-screen">
@@ -58,7 +53,7 @@ export function renderHistory(ctx) {
         <div class="app-wordmark" style="font-size:17px">${escHtml(friendName)}</div>
         <div class="header-actions"></div>
       </header>
-      <div class="history-messages" id="history-messages">
+      <div class="history-messages" id="history-messages" data-scroll-key="${scrollKey}">
         ${hd ? historyMessagesHtml(hd.woods, userId, friendName) : `
           <div class="empty-state" style="padding-top:60px">
             <div class="empty-emoji">🪵</div>
@@ -89,7 +84,11 @@ export function renderHistory(ctx) {
     }
   });
 
-  if (hd) scrollHistoryToBottom();
+  if (hd) {
+    restoreScrollPosition(scrollKey, {
+      toBottom: options.scrollToBottom || scrollState?.wasNearBottom,
+    });
+  }
 }
 
 function currentHistoryFriend() {
@@ -169,8 +168,7 @@ async function sendHistoryWood(ctx, options = {}) {
     });
     state.historyData = await api(`/api/friends/${friendId}/woods`);
     state.error = "";
-    renderHistory(ctx);
-    scrollHistoryToBottom();
+    renderHistory(ctx, { scrollToBottom: true });
   } catch (err) {
     markMileHighWoodAttempt(err);
     showToast(humanErr(err.message));

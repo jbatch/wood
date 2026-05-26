@@ -1,4 +1,5 @@
 import { state } from "../state.js";
+import { restoreScrollPosition, saveScrollPosition } from "../ui/scrollState.js";
 import { escHtml, humanErr } from "../utils.js";
 import { bindNotifications, notificationButtonHtml, notificationSheetHtml } from "./notifications.js";
 
@@ -13,6 +14,8 @@ export async function openSettings(ctx) {
 export function renderSettings(ctx) {
   const { app, logout, render } = ctx;
   const settings = state.data?.settings || {};
+  saveScrollPosition();
+  const scrollKey = "settings";
   app.innerHTML = `
     <div class="shell">
       <header class="app-header">
@@ -21,7 +24,7 @@ export function renderSettings(ctx) {
           ${notificationButtonHtml()}
         </div>
       </header>
-      <div class="scroll-content profile-scroll">
+      <div class="scroll-content profile-scroll" data-scroll-key="${scrollKey}">
         ${accountPanel()}
         ${passwordPanel()}
         ${notificationsPanel(settings)}
@@ -42,6 +45,7 @@ export function renderSettings(ctx) {
   `;
 
   bindNotifications(ctx);
+  restoreScrollPosition(scrollKey);
   document.querySelector("#logout-btn")?.addEventListener("click", logout);
   document.querySelector("#bug-btn")?.addEventListener("click", async () => {
     state.showBugReportSheet = true;

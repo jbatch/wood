@@ -6,7 +6,7 @@ import { humanErr } from "./utils.js";
 import { ensureAdminData, renderAdmin } from "./views/admin.js";
 import { renderAuth } from "./views/auth.js";
 import { renderHome } from "./views/home.js";
-import { openHistory, renderHistory, scrollHistoryToBottom } from "./views/history.js";
+import { openHistory, renderHistory } from "./views/history.js";
 import { openProfile, renderProfile } from "./views/profile.js";
 import { openSettings, renderSettings } from "./views/settings.js";
 
@@ -220,15 +220,19 @@ async function poll() {
   ) return;
   state.polling = true;
   try {
-    await refreshCurrentData();
+    const hadError = Boolean(state.error);
+    const appChanged = await refreshCurrentData();
     state.error = "";
+    const previousPushStatus = state.pushStatus;
     await refreshPushStatus();
-    if (location.pathname === "/admin") autoRender();
-    else if (state.view === "home") autoRender();
+    const pushChanged = !sameJson(previousPushStatus, state.pushStatus);
+    const shouldRenderApp = appChanged || pushChanged || hadError;
+    if (location.pathname === "/admin" && shouldRenderApp) autoRender();
+    else if (state.view === "home" && shouldRenderApp) autoRender();
     if (state.view === "history" && state.historyFriendId) {
+      const previousHistoryData = state.historyData;
       state.historyData = await api(`/api/friends/${state.historyFriendId}/woods`);
-      autoRender();
-      scrollHistoryToBottom();
+      if (shouldRenderApp || !sameJson(previousHistoryData, state.historyData)) autoRender();
     }
   } catch (err) {
     state.error = humanErr(err.message);
@@ -238,11 +242,23 @@ async function poll() {
 }
 
 async function refreshCurrentData() {
+  const previousData = state.data;
   state.data = await api("/api/app");
+  let changed = !sameJson(previousData, state.data);
   if (location.pathname === "/admin" && state.data.user.role === "admin") {
+    const previousAdmin = state.admin;
+    const previousDebug = state.debug;
     state.admin = await api("/api/admin");
     state.debug = await api("/api/admin/debug");
+    changed = changed
+      || !sameJson(previousAdmin, state.admin)
+      || !sameJson(previousDebug, state.debug);
   }
+  return changed;
+}
+
+function sameJson(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 function bindPollingEvents() {

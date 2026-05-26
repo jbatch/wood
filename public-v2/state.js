@@ -20,6 +20,7 @@ export const state = {
   adminAchievementSlug: "",
   historyFriendId: null,
   historyData: null,
+  scrollPositions: {},
   profileUserId: null,
   profileData: null,
   profileError: "",

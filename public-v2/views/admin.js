@@ -1,5 +1,6 @@
 import { api } from "../api.js";
 import { state } from "../state.js";
+import { restoreScrollPosition, saveScrollPosition } from "../ui/scrollState.js";
 import { copyText, escHtml, formatDate, humanErr, without } from "../utils.js";
 
 export async function ensureAdminData() {
@@ -10,6 +11,7 @@ export async function ensureAdminData() {
 
 export function renderAdmin(ctx) {
   const { app, render, renderHome } = ctx;
+  saveScrollPosition();
   if (!state.admin) {
     app.innerHTML = `
       <div class="shell">
@@ -27,6 +29,7 @@ export function renderAdmin(ctx) {
     return;
   }
 
+  const scrollKey = `admin:${state.adminTab}`;
   app.innerHTML = `
     <div class="shell admin-shell">
       <header class="app-header">
@@ -36,7 +39,7 @@ export function renderAdmin(ctx) {
           <button class="icon-btn" id="logout-btn" title="Log out">↩</button>
         </div>
       </header>
-      <div class="scroll-content admin-content">
+      <div class="scroll-content admin-content" data-scroll-key="${scrollKey}">
         ${state.error ? `<div class="error-banner">${escHtml(state.error)}</div>` : ""}
         ${adminPanelHtml()}
       </div>
@@ -44,6 +47,7 @@ export function renderAdmin(ctx) {
     </div>
   `;
   bindAdmin(ctx);
+  restoreScrollPosition(scrollKey);
 }
 
 function adminPanelHtml() {

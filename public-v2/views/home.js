@@ -1,12 +1,14 @@
-import { state, swipeOpen } from "../state.js";
+import { state } from "../state.js";
 import { bindFriendCard, TRAY_W } from "../ui/friendCard.js";
+import { restoreScrollPosition, saveScrollPosition } from "../ui/scrollState.js";
 import { countdown, escHtml, formatDate, humanErr } from "../utils.js";
 import { bindNotifications, notificationButtonHtml, notificationSheetHtml } from "./notifications.js";
 
 export function renderHome(ctx) {
   const { app } = ctx;
   const d = state.data;
-  swipeOpen.clear();
+  saveScrollPosition();
+  const scrollKey = `home:${state.homeTab}`;
 
   app.innerHTML = `
     <div class="shell">
@@ -18,7 +20,7 @@ export function renderHome(ctx) {
         </div>
       </header>
 
-      <div class="scroll-content" id="scroll-area">
+      <div class="scroll-content" id="scroll-area" data-scroll-key="${scrollKey}">
         ${state.homeTab === "stats" ? homeStatsHtml(d) : state.homeTab === "groups" ? `
           ${legacyGroupsNoticeHtml(d.groupSystem)}
           ${groupInvitesHtml(d.groupInvites || [])}
@@ -41,6 +43,7 @@ export function renderHome(ctx) {
   `;
 
   bindHome(ctx);
+  restoreScrollPosition(scrollKey);
 }
 
 function statsBarHtml(stats) {

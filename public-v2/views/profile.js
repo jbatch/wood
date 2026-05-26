@@ -1,5 +1,6 @@
 import { state } from "../state.js";
 import { markMileHighWoodAttempt } from "../api.js";
+import { restoreScrollPosition, saveScrollPosition } from "../ui/scrollState.js";
 import { escHtml, humanErr } from "../utils.js";
 
 const MONTHS = [
@@ -40,6 +41,8 @@ export function renderProfile(ctx) {
   const data = state.profileData;
   const profile = data?.profile;
   const title = profile?.username || "Profile";
+  saveScrollPosition();
+  const scrollKey = `profile:${state.profileUserId || "none"}`;
 
   app.innerHTML = `
     <div class="shell">
@@ -50,12 +53,14 @@ export function renderProfile(ctx) {
         <div class="app-wordmark" style="font-size:17px">${escHtml(title)}</div>
         <div class="header-actions"></div>
       </header>
-      <div class="scroll-content profile-scroll">
+      <div class="scroll-content profile-scroll" data-scroll-key="${scrollKey}">
         ${data ? profileHtml(data) : loadingHtml()}
       </div>
       ${state.profileError ? `<div class="toast">${escHtml(state.profileError)}</div>` : ""}
     </div>
   `;
+
+  restoreScrollPosition(scrollKey);
 
   document.querySelector("#back-btn")?.addEventListener("click", () => {
     state.view = "home";
