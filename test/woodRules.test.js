@@ -11,6 +11,7 @@ import {
   canSendGroupWood,
   personalStockpile,
   visibleGroupWoodState,
+  WOODPILE_TIERS,
 } from "../src/groupRules.js";
 import {
   canSendWood,
@@ -213,13 +214,33 @@ test("group deposit cost rises as the pile reaches tiers", () => {
       sent_at: "2026-05-22T00:00:00.000Z",
       type: "deposit",
       label: "Deposited Wood",
-      amount: 4,
+      amount: 5,
     },
   );
 
   const state = canSendGroupWood(db, "a", "group_1", Date.parse("2026-05-22T02:00:00.000Z"));
   assert.equal(state.ok, true);
   assert.equal(state.depositCost, 2);
+});
+
+test("group tiers include rounded thresholds for every phase", () => {
+  assert.equal(WOODPILE_TIERS.length, 24);
+  assert.deepEqual(
+    WOODPILE_TIERS.map((tier) => tier.phase),
+    [
+      "Personal", "Personal", "Personal",
+      "Household", "Household", "Household",
+      "Neighbourhood", "Neighbourhood", "Neighbourhood",
+      "Town", "Town", "Town",
+      "City", "City", "City",
+      "State", "State", "State",
+      "National", "National", "National",
+      "Mythic", "Mythic", "Mythic",
+    ],
+  );
+  for (const tier of WOODPILE_TIERS) {
+    assert.equal(tier.minWood % tier.depositCost, 0, `${tier.name} threshold should match deposit cost`);
+  }
 });
 
 test("group stockpiles ignore woods received before the v2 migration", () => {
@@ -420,7 +441,42 @@ test("group achievements award personal contributions and shared tiers", () => {
   const earnedTier = achievementProgress(db, "b")
     .find((achievement) => achievement.slug === "group-tier-private-pile");
   assert.equal(earnedTier.name, "Private Pile");
-  assert.equal(earnedTier.description, "Be in a group when the Woodpile reaches Private Pile");
+  assert.equal(earnedTier.description, "Your group gets to Private Pile");
+});
+
+test("joining an existing group awards already reached tier achievements", () => {
+  const db = dbWithWoods();
+  db.groups.push({
+    id: "group_1",
+    name: "Friday Woods",
+    created_by: "a",
+    created_at: "2026-05-22T00:00:00.000Z",
+    dissolved_at: null,
+    legacy_at: null,
+    woodpile_adjustment: 6,
+  });
+  db.group_members.push(
+    {
+      id: "member_1",
+      group_id: "group_1",
+      user_id: "a",
+      status: "accepted",
+    },
+    {
+      id: "member_2",
+      group_id: "group_1",
+      user_id: "b",
+      status: "pending",
+    },
+  );
+
+  assert(!evaluateAchievements(db, "b").some((achievement) => achievement.slug === "group-tier-backyard-stack"));
+
+  db.group_members.find((member) => member.id === "member_2").status = "accepted";
+  const slugs = evaluateAchievements(db, "b").map((achievement) => achievement.slug);
+
+  assert(slugs.includes("group-tier-private-pile"));
+  assert(slugs.includes("group-tier-backyard-stack"));
 });
 
 test("admin can reset earned achievements for one user", () => {

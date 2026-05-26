@@ -1139,6 +1139,9 @@ async function respondToGroupInvite(user, res, membershipId, action) {
     sendJson(res, result.error === "already_in_group" ? 409 : 404, { error: result.error });
     return;
   }
+  if (action === "accept") {
+    await evaluateAndNotifyAchievements([user.id]);
+  }
   if (action === "accept" && result.membership.invited_by) {
     await createNotification({
       user_id: result.membership.invited_by,
