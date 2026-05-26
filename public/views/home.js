@@ -255,7 +255,6 @@ function groupsListHtml(groups) {
   if (!groups.length) {
     return `
       <div class="section-head with-action">
-        <span>The Woodpile</span>
         <button class="section-add-btn" type="button" data-action="add-group" title="Start pile">＋</button>
       </div>
       <div class="empty-state">
@@ -265,9 +264,6 @@ function groupsListHtml(groups) {
     `;
   }
   return `
-    <div class="section-head with-action">
-      <span>The Woodpile</span>
-    </div>
     <div class="woodpile-list">
       ${groups.map(groupCardHtml).join("")}
     </div>
