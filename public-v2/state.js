@@ -31,6 +31,8 @@ export const state = {
   showAddSheet: false,
   addError: "",
   showGroupSheet: false,
+  showGroupInviteSheet: false,
+  groupInviteGroupId: null,
   groupError: "",
 };
 

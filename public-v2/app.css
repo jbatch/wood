@@ -1059,6 +1059,12 @@ html, body {
   cursor: default;
 }
 
+.woodpile-invite {
+  width: 100%;
+  margin-top: 12px;
+  justify-content: center;
+}
+
 .woodpile-admin-tools {
   margin-top: 12px;
   padding: 12px;

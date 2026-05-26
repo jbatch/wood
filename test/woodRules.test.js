@@ -9,6 +9,7 @@ import {
 import {
   canCreateGroupWith,
   canSendGroupWood,
+  groupInviteCandidates,
   personalStockpile,
   visibleGroupWoodState,
   WOODPILE_TIERS,
@@ -101,6 +102,46 @@ test("groups can only invite existing accepted friends", () => {
     status: "accepted",
   });
   assert.equal(canCreateGroupWith(db, "a", ["b"]).reason, "already_in_group");
+});
+
+test("existing groups can invite eligible friends later", () => {
+  const db = dbWithWoods();
+  db.friendships.push({
+    id: "friendship_2",
+    requester_id: "a",
+    addressee_id: "c",
+    status: "accepted",
+  });
+  db.users.push({ id: "c", username: "caro", created_at: "2026-05-01T00:00:00.000Z" });
+  db.groups.push({
+    id: "group_1",
+    name: "Friday Woods",
+    created_by: "a",
+    created_at: "2026-05-22T00:00:00.000Z",
+    dissolved_at: null,
+    legacy_at: null,
+  });
+  db.group_members.push(
+    {
+      id: "member_1",
+      group_id: "group_1",
+      user_id: "a",
+      status: "accepted",
+    },
+    {
+      id: "member_2",
+      group_id: "group_1",
+      user_id: "b",
+      status: "pending",
+    },
+  );
+
+  const state = groupInviteCandidates(db, "a", "group_1");
+
+  assert.equal(state.ok, true);
+  assert.deepEqual(state.memberIds, ["c"]);
+  assert.equal(groupInviteCandidates(db, "b", "group_1").reason, "not_member");
+  assert.equal(groupInviteCandidates(db, "a", "group_1", ["not_friend"]).reason, "friends_only");
 });
 
 test("group deposits spend received wood from a personal stockpile", () => {

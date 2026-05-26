@@ -58,6 +58,7 @@ import {
   canCreateGroupWith,
   canSendGroupWood,
   groupDepositTotal,
+  groupInviteCandidates,
   groupMembers,
   groupStats,
   groupWoods,
@@ -366,6 +367,12 @@ async function handleApi(req, res, url) {
 
   if (req.method === "POST" && url.pathname === "/api/groups/tutorial/read") {
     await dismissGroupTutorial(user, res);
+    return;
+  }
+
+  const groupInviteMembers = url.pathname.match(/^\/api\/groups\/([^/]+)\/invites$/);
+  if (req.method === "POST" && groupInviteMembers) {
+    await inviteGroupMembers(user, res, groupInviteMembers[1], body);
     return;
   }
 
@@ -1095,6 +1102,88 @@ async function createGroup(user, res, body) {
   });
 
   sendJson(res, 201, appState(user));
+}
+
+async function inviteGroupMembers(user, res, groupId, body) {
+  const requestedIds = Array.isArray(body.memberIds)
+    ? body.memberIds.map((memberId) => String(memberId))
+    : null;
+  const inviteState = groupInviteCandidates(store.db, user.id, groupId, requestedIds);
+  if (!inviteState.ok) {
+    sendJson(res, inviteState.reason === "not_member" ? 403 : 404, { error: inviteState.reason });
+    return;
+  }
+  if (!inviteState.memberIds.length) {
+    sendJson(res, 400, { error: "no_eligible_friends" });
+    return;
+  }
+
+  const result = await store.write((db) => {
+    const freshState = groupInviteCandidates(db, user.id, groupId, inviteState.memberIds);
+    if (!freshState.ok) return freshState;
+    const now = nowIso();
+    const memberships = [];
+    for (const memberId of freshState.memberIds) {
+      let membership = db.group_members.find(
+        (member) => member.group_id === groupId && member.user_id === memberId,
+      );
+      if (membership && membership.status === "declined") {
+        membership.status = "pending";
+        membership.invited_by = user.id;
+        membership.updated_at = now;
+      } else if (!membership) {
+        membership = {
+          id: id("group_member"),
+          group_id: groupId,
+          user_id: memberId,
+          invited_by: user.id,
+          status: "pending",
+          created_at: now,
+          updated_at: now,
+        };
+        db.group_members.push(membership);
+      }
+      if (membership?.status === "pending") memberships.push(membership);
+    }
+    return { group: freshState.group, memberships };
+  });
+
+  if (!result.ok && result.reason) {
+    sendJson(res, result.reason === "not_member" ? 403 : 404, { error: result.reason });
+    return;
+  }
+  if (!result.memberships.length) {
+    sendJson(res, 400, { error: "no_eligible_friends" });
+    return;
+  }
+
+  for (const membership of result.memberships) {
+    await createNotification({
+      user_id: membership.user_id,
+      type: "group.invite",
+      title: `You were invited to ${result.group.name}`,
+      body: `${user.username} found more room in the pile.`,
+      url: "/?tab=groups",
+      actor_id: user.id,
+      data: { groupId: result.group.id, invitedBy: user.id },
+      dedupe_key: `group_invite:${result.group.id}:${membership.user_id}:${membership.updated_at}`,
+    });
+    await notifyAndPrune(membership.user_id, groupInviteNotification(user, result.group), {
+      event: "group.invite.created",
+      groupId: result.group.id,
+      invitedUserId: membership.user_id,
+    });
+    emitUserEvent(membership.user_id, "group.invite.created", {
+      groupId: result.group.id,
+      invitedBy: user.id,
+    });
+  }
+
+  emitUserEvent(user.id, "app.changed", {
+    reason: "group.invites.created",
+    groupId: result.group.id,
+  });
+  sendJson(res, 200, appState(currentUserFromId(user.id)));
 }
 
 async function dismissGroupMigrationNotice(user, res) {
@@ -2379,6 +2468,9 @@ function publicGroup(group, viewerId = null) {
   const acceptedMembers = members.filter((member) => member.status === "accepted");
   const pendingMembers = members.filter((member) => member.status === "pending");
   const stats = groupStats(store.db, group.id);
+  const inviteableFriends = viewerId
+    ? groupInviteCandidates(store.db, viewerId, group.id).memberIds || []
+    : [];
   return {
     id: group.id,
     name: group.name,
@@ -2394,6 +2486,9 @@ function publicGroup(group, viewerId = null) {
     pendingMembers: pendingMembers.map((member) =>
       publicUser(store.db.users.find((user) => user.id === member.user_id)),
     ).filter(Boolean),
+    inviteableFriends: inviteableFriends.map((userId) =>
+      publicUser(store.db.users.find((user) => user.id === userId)),
+    ).filter(Boolean).sort((a, b) => a.username.localeCompare(b.username)),
     wood: viewerId ? visibleGroupWoodState(store.db, viewerId, group.id) : null,
     stats: {
       ...stats,

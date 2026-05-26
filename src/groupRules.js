@@ -233,6 +233,35 @@ export function canCreateGroupWith(db, creatorId, memberIds) {
   return { ok: true, memberIds: eligibleMemberIds };
 }
 
+export function groupInviteCandidates(db, inviterId, groupId, memberIds = null) {
+  const group = db.groups.find((candidate) => candidate.id === groupId);
+  if (!group || group.dissolved_at || isLegacyGroup(group)) return { ok: false, reason: "not_found" };
+  const inviterMembership = (db.group_members || []).find(
+    (member) =>
+      member.group_id === groupId &&
+      member.user_id === inviterId &&
+      member.status === "accepted",
+  );
+  if (!inviterMembership) return { ok: false, reason: "not_member" };
+
+  const friendIds = new Set(getAcceptedFriendIds(db, inviterId));
+  const requestedIds = memberIds
+    ? [...new Set(memberIds)].filter((memberId) => memberId !== inviterId)
+    : [...friendIds];
+  if (requestedIds.some((memberId) => !friendIds.has(memberId))) {
+    return { ok: false, reason: "friends_only" };
+  }
+  const existingIds = new Set(
+    (db.group_members || [])
+      .filter((member) => member.group_id === groupId && ["accepted", "pending"].includes(member.status))
+      .map((member) => member.user_id),
+  );
+  const eligibleMemberIds = requestedIds.filter(
+    (memberId) => !existingIds.has(memberId) && !activeGroupForUser(db, memberId),
+  );
+  return { ok: true, group, memberIds: eligibleMemberIds };
+}
+
 export function canSendGroupWood(db, senderId, groupId, now = Date.now()) {
   const group = db.groups.find((candidate) => candidate.id === groupId);
   if (!group || group.dissolved_at || isLegacyGroup(group)) return { ok: false, reason: "not_found" };

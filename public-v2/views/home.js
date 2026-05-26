@@ -35,6 +35,7 @@ export function renderHome(ctx) {
       ${notificationSheetHtml()}
       ${state.showAddSheet ? addSheetHtml() : ""}
       ${state.showGroupSheet ? groupSheetHtml(d.friends || []) : ""}
+      ${state.showGroupInviteSheet ? groupInviteSheetHtml(d.groups || []) : ""}
       ${state.homeTab === "groups" && !d.groupSystem?.tutorialSeen ? groupTutorialSheetHtml() : ""}
     </div>
   `;
@@ -321,6 +322,11 @@ function groupCardHtml(group) {
           `).join("")}
         </div>
       ` : `<div class="woodpile-empty-rank">No deposits yet. Suspiciously tidy.</div>`}
+      ${group.inviteableFriends?.length ? `
+        <button class="chip-btn woodpile-invite" type="button" data-invite-group-target="${escHtml(group.id)}">
+          Invite friends
+        </button>
+      ` : ""}
       ${group.pendingMembers.length ? `<div class="group-pending">${group.pendingMembers.length} pending invites</div>` : ""}
     </div>
   `;
@@ -541,6 +547,37 @@ function groupSheetHtml(friends) {
   `;
 }
 
+function groupInviteSheetHtml(groups) {
+  const group = groups.find((candidate) => candidate.id === state.groupInviteGroupId);
+  const friends = group?.inviteableFriends || [];
+  return `
+    <div class="sheet-overlay" id="group-invite-sheet-overlay">
+      <div class="sheet" id="group-invite-sheet">
+        <div class="sheet-title">Invite friends</div>
+        <form id="group-invite-form" autocomplete="off">
+          <div class="group-empty">
+            ${friends.length
+              ? `Invite ${friends.length} eligible friend${friends.length === 1 ? "" : "s"} to ${escHtml(group.name)}.`
+              : "No eligible friends are free to join this pile."}
+          </div>
+          ${friends.length ? `
+            <div class="group-picker">
+              ${friends.map((friend) => `
+                <label class="group-choice">
+                  <input type="checkbox" name="memberIds" value="${escHtml(friend.id)}" checked />
+                  <span>${escHtml(friend.username)}</span>
+                </label>
+              `).join("")}
+            </div>
+          ` : ""}
+          <div class="sheet-error">${escHtml(state.groupError)}</div>
+          <button class="btn-primary" type="submit" ${friends.length ? "" : "disabled"}>Send invites</button>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
 function pushBtnHtml() {
   const s = state.pushStatus;
   if (!s || !state.data?.push?.enabled) return "";
@@ -621,6 +658,13 @@ function bindHome(ctx) {
       renderHome(ctx);
     }
   });
+  document.querySelector("#group-invite-sheet-overlay")?.addEventListener("click", (e) => {
+    if (e.target.id === "group-invite-sheet-overlay") {
+      state.showGroupInviteSheet = false;
+      state.groupInviteGroupId = null;
+      renderHome(ctx);
+    }
+  });
 
   document.querySelector("#add-form")?.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -649,6 +693,32 @@ function bindHome(ctx) {
     } catch (err) {
       state.groupError = humanErr(err.message);
       document.querySelector("#group-sheet .sheet-error").textContent = state.groupError;
+    }
+  });
+  document.querySelectorAll("[data-invite-group-target]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      state.showGroupInviteSheet = true;
+      state.groupInviteGroupId = btn.dataset.inviteGroupTarget;
+      state.groupError = "";
+      renderHome(ctx);
+    });
+  });
+  document.querySelector("#group-invite-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const memberIds = new FormData(e.currentTarget).getAll("memberIds").map(String);
+    try {
+      state.data = await api(`/api/groups/${state.groupInviteGroupId}/invites`, {
+        method: "POST",
+        body: { memberIds },
+      });
+      state.error = "";
+      state.showGroupInviteSheet = false;
+      state.groupInviteGroupId = null;
+      render();
+    } catch (err) {
+      state.groupError = humanErr(err.message);
+      document.querySelector("#group-invite-sheet .sheet-error").textContent = state.groupError;
     }
   });
 
