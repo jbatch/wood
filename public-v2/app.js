@@ -1,4 +1,4 @@
-import { api } from "./api.js";
+import { api, markMileHighWoodAttempt } from "./api.js";
 import { refreshPushStatus, subscribePush } from "./push.js";
 import { state } from "./state.js";
 import { restoreTabs, saveAdminTab, saveHomeTab } from "./tabs.js";
@@ -137,6 +137,7 @@ async function mutate(url, body = {}) {
     if (state.data.user.role === "admin") state.admin = await api("/api/admin");
     render();
   } catch (err) {
+    if (/^\/api\/(friends|groups)\/[^/]+\/wood$/.test(url)) markMileHighWoodAttempt(err);
     state.error = humanErr(err.message);
     render();
   }

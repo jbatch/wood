@@ -488,8 +488,17 @@ export const ACHIEVEMENTS = [
     name: "Mile High Wood",
     description: "Send a Wood from a plane",
     icon: "plane",
-    criteria_type: "manual",
+    criteria_type: "special",
     criteria_value: "mile_high_wood",
+    secret: true,
+  },
+  {
+    slug: "unsolicited-wood",
+    name: "Unsolicited Wood",
+    description: "Try to send Wood to someone who is not your friend",
+    icon: "???",
+    criteria_type: "special",
+    criteria_value: "unsolicited_wood",
     secret: true,
   },
   ...GROUP_CONTRIBUTION_ACHIEVEMENTS,
@@ -792,6 +801,12 @@ function addEventSlugs(db, userId, sent, slugs, context) {
   }
   if (events.some((event) => event.type === "super_wood_declined")) {
     slugs.add("declined-transaction");
+  }
+  if (events.some((event) => event.type === "mile_high_wood")) {
+    slugs.add("mile-high-wood");
+  }
+  if (events.some((event) => event.type === "unsolicited_wood")) {
+    slugs.add("unsolicited-wood");
   }
 }
 

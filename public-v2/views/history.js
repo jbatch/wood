@@ -1,4 +1,5 @@
 import { state } from "../state.js";
+import { markMileHighWoodAttempt } from "../api.js";
 import { countdown, escHtml, humanErr } from "../utils.js";
 
 const LONG_HOLD_ARM_MS = 450;
@@ -171,6 +172,7 @@ async function sendHistoryWood(ctx, options = {}) {
     renderHistory(ctx);
     scrollHistoryToBottom();
   } catch (err) {
+    markMileHighWoodAttempt(err);
     showToast(humanErr(err.message));
   }
 }

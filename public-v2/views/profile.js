@@ -1,4 +1,5 @@
 import { state } from "../state.js";
+import { markMileHighWoodAttempt } from "../api.js";
 import { escHtml, humanErr } from "../utils.js";
 
 const MONTHS = [
@@ -325,6 +326,7 @@ async function sendBirthdayWood(ctx) {
     state.profileError = "";
     render();
   } catch (err) {
+    markMileHighWoodAttempt(err);
     state.profileError = humanErr(err.message);
     render();
   }

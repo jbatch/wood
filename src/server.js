@@ -129,6 +129,7 @@ const FAVOURITE_WOODS = [
   "yggdrasil",
 ];
 const FOREVER_SNOOZE_UNTIL = "9999-12-31T23:59:59.000Z";
+const MILE_HIGH_WOOD_COOKIE = "wood_mile_high_attempt";
 const ACHIEVEMENT_EVENT_TYPES = new Set([
   "history_view",
   "history_keyboard_self_control",
@@ -283,10 +284,19 @@ async function handleApi(req, res, url) {
   });
 
   if (req.method === "GET" && url.pathname === "/api/app") {
+    const cookies = parseCookies(req.headers.cookie || "");
+    if (cookies[MILE_HIGH_WOOD_COOKIE]) {
+      await recordAchievementEvent(user.id, "mile_high_wood", null, {
+        source: "offline_send_marker",
+      });
+    }
     await evaluateAndNotifyAchievements([user.id], {
       [user.id]: { now: nowIso() },
     });
-    sendJson(res, 200, appState(user));
+    const headers = cookies[MILE_HIGH_WOOD_COOKIE]
+      ? { "Set-Cookie": `${MILE_HIGH_WOOD_COOKIE}=; Path=/; SameSite=Lax; Max-Age=0` }
+      : {};
+    sendJson(res, 200, appState(user), headers);
     return;
   }
 
@@ -1447,6 +1457,11 @@ async function sendWood(user, res, recipientId, body) {
     if (state.reason === "cooldown") {
       await recordAchievementEvent(user.id, "cooldown_attempt", recipientId, {
         expiresAt: state.expiresAt || null,
+      });
+      await evaluateAndNotifyAchievements([user.id]);
+    } else if (state.reason === "not_friends") {
+      await recordAchievementEvent(user.id, "unsolicited_wood", recipientId, {
+        source: "non_friend_send_attempt",
       });
       await evaluateAndNotifyAchievements([user.id]);
     }
