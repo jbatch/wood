@@ -1,14 +1,143 @@
 import { getAcceptedFriendIds } from "./woodRules.js";
 
+const GROUP_DEPOSIT_COOLDOWN_MS = 60 * 60 * 1000;
+
+export const WOODPILE_TIERS = [
+  {
+    minWood: 0,
+    depositCost: 1,
+    name: "Bare Patch",
+    hint: "A place where Wood might happen.",
+  },
+  {
+    minWood: 2,
+    depositCost: 1,
+    name: "Private Pile",
+    hint: "A small personal decision.",
+  },
+  {
+    minWood: 5,
+    depositCost: 2,
+    name: "Backyard Stack",
+    hint: "Still plausibly normal.",
+  },
+  {
+    minWood: 12,
+    depositCost: 3,
+    name: "Household Woodpile",
+    hint: "Other people in the house have noticed.",
+  },
+  {
+    minWood: 22,
+    depositCost: 4,
+    name: "Local Curiosity",
+    hint: "People slow down near it.",
+  },
+  {
+    minWood: 38,
+    depositCost: 6,
+    name: "Suspicious Heap",
+    hint: "No longer deniable.",
+  },
+  {
+    minWood: 60,
+    depositCost: 8,
+    name: "Town Pile",
+    hint: "Known by reputation.",
+  },
+  {
+    minWood: 90,
+    depositCost: 10,
+    name: "Municipal Lumber Event",
+    hint: "Someone has a clipboard.",
+  },
+  {
+    minWood: 130,
+    depositCost: 12,
+    name: "City Pile",
+    hint: "It appears on maps.",
+  },
+  {
+    minWood: 185,
+    depositCost: 15,
+    name: "Metropolitan Wood Concern",
+    hint: "Planners are using calm voices.",
+  },
+  {
+    minWood: 260,
+    depositCost: 20,
+    name: "State Pile",
+    hint: "A regional identity issue.",
+  },
+  {
+    minWood: 360,
+    depositCost: 26,
+    name: "Heritage Lumber Site",
+    hint: "Reverence begins.",
+  },
+  {
+    minWood: 490,
+    depositCost: 34,
+    name: "National Pile",
+    hint: "Schoolchildren learn about it incorrectly.",
+  },
+  {
+    minWood: 660,
+    depositCost: 44,
+    name: "Monumental Woodform",
+    hint: "Pilgrims arrive.",
+  },
+  {
+    minWood: 880,
+    depositCost: 56,
+    name: "The Great Stack",
+    hint: "Capital letters become unavoidable.",
+  },
+  {
+    minWood: 1160,
+    depositCost: 72,
+    name: "Sacred Timber",
+    hint: "Ritual behavior observed.",
+  },
+  {
+    minWood: 1510,
+    depositCost: 90,
+    name: "The Ascendant Heap",
+    hint: "The pile is no longer asking permission.",
+  },
+];
+
+export function isLegacyGroup(group) {
+  return Boolean(group?.legacy_at);
+}
+
 export function acceptedGroupMemberships(db, userId) {
   return (db.group_members || []).filter(
-    (member) => member.user_id === userId && member.status === "accepted",
+    (member) => {
+      const group = db.groups.find((candidate) => candidate.id === member.group_id);
+      return (
+        member.user_id === userId &&
+        member.status === "accepted" &&
+        group &&
+        !group.dissolved_at &&
+        !isLegacyGroup(group)
+      );
+    },
   );
 }
 
 export function pendingGroupInvites(db, userId) {
   return (db.group_members || []).filter(
-    (member) => member.user_id === userId && member.status === "pending",
+    (member) => {
+      const group = db.groups.find((candidate) => candidate.id === member.group_id);
+      return (
+        member.user_id === userId &&
+        member.status === "pending" &&
+        group &&
+        !group.dissolved_at &&
+        !isLegacyGroup(group)
+      );
+    },
   );
 }
 
@@ -21,25 +150,26 @@ export function groupMembers(db, groupId, status = "accepted") {
 export function visibleGroups(db, userId) {
   return acceptedGroupMemberships(db, userId)
     .map((membership) => db.groups.find((group) => group.id === membership.group_id))
-    .filter((group) => group && !group.dissolved_at)
+    .filter((group) => group && !group.dissolved_at && !isLegacyGroup(group))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export function canCreateGroupWith(db, creatorId, memberIds) {
+  if (activeGroupForUser(db, creatorId)) {
+    return { ok: false, reason: "already_in_group" };
+  }
   const friendIds = new Set(getAcceptedFriendIds(db, creatorId));
   const uniqueMemberIds = [...new Set(memberIds)].filter((memberId) => memberId !== creatorId);
-  if (uniqueMemberIds.length < 1) {
-    return { ok: false, reason: "group_needs_members" };
-  }
   if (uniqueMemberIds.some((memberId) => !friendIds.has(memberId))) {
     return { ok: false, reason: "friends_only" };
   }
-  return { ok: true, memberIds: uniqueMemberIds };
+  const eligibleMemberIds = uniqueMemberIds.filter((memberId) => !activeGroupForUser(db, memberId));
+  return { ok: true, memberIds: eligibleMemberIds };
 }
 
 export function canSendGroupWood(db, senderId, groupId, now = Date.now()) {
   const group = db.groups.find((candidate) => candidate.id === groupId);
-  if (!group || group.dissolved_at) return { ok: false, reason: "not_found" };
+  if (!group || group.dissolved_at || isLegacyGroup(group)) return { ok: false, reason: "not_found" };
   const membership = (db.group_members || []).find(
     (member) =>
       member.group_id === groupId &&
@@ -48,63 +178,145 @@ export function canSendGroupWood(db, senderId, groupId, now = Date.now()) {
   );
   if (!membership) return { ok: false, reason: "not_member" };
 
-  const cooldownMs = Number(db.config.cooldown_hours || 24) * 60 * 60 * 1000;
-  const lastSent = latestGroupWood(db, groupId, senderId);
-  if (!lastSent) return { ok: true };
-
-  const lastReply = latestGroupReply(db, groupId, senderId);
-  if (lastReply && Date.parse(lastReply.sent_at) > Date.parse(lastSent.sent_at)) {
-    return { ok: true };
+  const depositCost = woodpileStage(groupWoodTotal(db, groupId)).depositCost;
+  const stockpile = personalStockpile(db, senderId);
+  if (stockpile < depositCost) {
+    return {
+      ok: false,
+      reason: "insufficient_stockpile",
+      stockpile,
+      depositCost,
+    };
   }
 
-  const expiresAt = Date.parse(lastSent.sent_at) + cooldownMs;
-  if (now >= expiresAt) return { ok: true };
+  const lastDeposit = latestGroupDeposit(db, groupId, senderId);
+  if (!lastDeposit) return { ok: true, stockpile, depositCost };
+  const lastReset = latestGroupCooldownReset(db, groupId, senderId);
+  if (lastReset && Date.parse(lastReset.sent_at) >= Date.parse(lastDeposit.sent_at)) {
+    return { ok: true, stockpile, depositCost };
+  }
+
+  const expiresAt = Date.parse(lastDeposit.sent_at) + GROUP_DEPOSIT_COOLDOWN_MS;
+  if (now >= expiresAt) return { ok: true, stockpile, depositCost };
 
   return {
     ok: false,
-    reason: "cooldown",
+    reason: "deposit_cooldown",
     expiresAt: new Date(expiresAt).toISOString(),
+    stockpile,
+    depositCost,
   };
 }
 
 export function visibleGroupWoodState(db, userId, groupId, now = Date.now()) {
   const state = canSendGroupWood(db, userId, groupId, now);
+  const rank = groupContributionRank(db, groupId, userId);
   return {
     canWood: state.ok,
     cooldownExpiresAt: state.ok ? null : state.expiresAt || null,
-    needsReply: Boolean(groupNeedsReply(db, userId, groupId)),
+    needsReply: false,
+    stockpile: personalStockpile(db, userId),
+    depositCost: state.depositCost || woodpileStage(groupWoodTotal(db, groupId)).depositCost,
+    depositCooldownHours: GROUP_DEPOSIT_COOLDOWN_MS / (60 * 60 * 1000),
+    rank: rank.rank,
+    contribution: rank.amount,
+    blockedReason: state.ok ? null : state.reason,
   };
 }
 
 export function groupStats(db, groupId) {
   const woods = groupWoods(db, groupId);
+  const total = groupWoodTotal(db, groupId);
   const senders = new Set(woods.map((wood) => wood.sender_id));
   return {
-    woods_sent: woods.length,
+    woods_sent: total,
+    deposits: woods.length,
     active_wooders: senders.size,
     last_wood_at: woods.at(-1)?.sent_at || null,
+    stage: woodpileStage(total),
+    ranks: groupContributionRanks(db, groupId),
   };
 }
 
 export function groupWoods(db, groupId) {
   return (db.group_woods || [])
-    .filter((wood) => wood.group_id === groupId)
+    .filter((wood) => wood.group_id === groupId && wood.type === "deposit")
     .sort((left, right) => Date.parse(left.sent_at) - Date.parse(right.sent_at));
 }
 
-function latestGroupWood(db, groupId, senderId) {
+export function groupDepositTotal(db, groupId) {
+  return groupWoods(db, groupId)
+    .reduce((sum, wood) => sum + Number(wood.amount || 1), 0);
+}
+
+export function personalStockpile(db, userId) {
+  const migratedAt = Date.parse(db.config?.groups_v2_migrated_at || "");
+  const received = (db.woods || []).filter((wood) =>
+    wood.recipient_id === userId &&
+    (!Number.isFinite(migratedAt) || Date.parse(wood.sent_at) >= migratedAt)
+  ).length;
+  const grants = (db.group_woods || [])
+    .filter((wood) => wood.sender_id === userId && wood.type === "admin_stockpile_grant")
+    .reduce((sum, wood) => sum + Number(wood.amount || 0), 0);
+  const deposited = (db.group_woods || [])
+    .filter((wood) => wood.sender_id === userId && wood.type === "deposit")
+    .reduce((sum, wood) => sum + Number(wood.amount || 1), 0);
+  return Math.max(0, received + grants - deposited);
+}
+
+export function activeGroupForUser(db, userId) {
+  const membership = acceptedGroupMemberships(db, userId)[0];
+  return membership
+    ? db.groups.find((group) => group.id === membership.group_id) || null
+    : null;
+}
+
+export function legacyGroupMembershipCount(db, userId) {
+  return (db.group_members || []).filter((member) => {
+    const group = db.groups.find((candidate) => candidate.id === member.group_id);
+    return member.user_id === userId && group && isLegacyGroup(group);
+  }).length;
+}
+
+function latestGroupDeposit(db, groupId, senderId) {
   return groupWoods(db, groupId)
     .filter((wood) => wood.sender_id === senderId)
     .sort((a, b) => Date.parse(b.sent_at) - Date.parse(a.sent_at))[0];
 }
 
-function latestGroupReply(db, groupId, senderId) {
-  return groupWoods(db, groupId)
-    .filter((wood) => wood.sender_id !== senderId)
+function latestGroupCooldownReset(db, groupId, senderId) {
+  return (db.group_woods || [])
+    .filter((wood) =>
+      wood.group_id === groupId &&
+      wood.sender_id === senderId &&
+      wood.type === "admin_cooldown_reset"
+    )
     .sort((a, b) => Date.parse(b.sent_at) - Date.parse(a.sent_at))[0];
 }
 
-function groupNeedsReply(db, userId, groupId) {
-  const latest = groupWoods(db, groupId).at(-1);
-  return latest && latest.sender_id !== userId;
+function groupContributionRank(db, groupId, userId) {
+  const ranks = groupContributionRanks(db, groupId);
+  return ranks.find((rank) => rank.userId === userId) || { userId, amount: 0, rank: null };
+}
+
+function groupContributionRanks(db, groupId) {
+  const totals = new Map();
+  for (const wood of groupWoods(db, groupId)) {
+    totals.set(wood.sender_id, (totals.get(wood.sender_id) || 0) + Number(wood.amount || 1));
+  }
+  return [...totals.entries()]
+    .map(([userId, amount]) => ({ userId, amount }))
+    .sort((left, right) => right.amount - left.amount || left.userId.localeCompare(right.userId))
+    .map((entry, index) => ({ ...entry, rank: index + 1 }));
+}
+
+function groupWoodTotal(db, groupId) {
+  const group = db.groups.find((candidate) => candidate.id === groupId);
+  return Math.max(0, groupDepositTotal(db, groupId) + Number(group?.woodpile_adjustment || 0));
+}
+
+function woodpileStage(total) {
+  return [...WOODPILE_TIERS]
+    .reverse()
+    .find((tier) => total >= tier.minWood) || WOODPILE_TIERS[0];
 }

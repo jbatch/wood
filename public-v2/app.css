@@ -755,6 +755,391 @@ html, body {
   font-weight: 700;
 }
 
+.legacy-group-notice {
+  margin: 14px 16px 4px;
+  padding: 14px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid rgba(201, 140, 42, 0.28);
+  border-radius: var(--radius);
+  background: rgba(201, 140, 42, 0.1);
+}
+
+.legacy-group-notice strong {
+  display: block;
+  font-size: 14px;
+  color: var(--text);
+  margin-bottom: 3px;
+}
+
+.legacy-group-notice p {
+  color: var(--risk-text);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.woodpile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 16px 16px;
+}
+
+.woodpile-card {
+  padding: 16px;
+  border: 1px solid rgba(62, 214, 105, 0.18);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(180deg, rgba(62, 214, 105, 0.08), rgba(62, 214, 105, 0.02)),
+    var(--surface-raised);
+  overflow: hidden;
+}
+
+.woodpile-card.wood-sent {
+  animation: woodFlash 420ms ease forwards;
+}
+
+.woodpile-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.woodpile-kicker {
+  font-size: 11px;
+  font-weight: 850;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.woodpile-title {
+  margin-top: 2px;
+  color: var(--text);
+  font-size: 24px;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  overflow-wrap: anywhere;
+}
+
+.woodpile-members {
+  min-width: 32px;
+  height: 32px;
+  border-radius: var(--radius-pill);
+  background: var(--streak-bg);
+  color: var(--streak-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.pile-illustration {
+  position: relative;
+  height: 122px;
+  margin: 14px 0 12px;
+  border-radius: var(--radius-sm);
+  background:
+    linear-gradient(180deg, rgba(12, 21, 16, 0.1), rgba(12, 21, 16, 0.55)),
+    var(--surface);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  --pile-scale: 1;
+  --pile-rows: 1;
+}
+
+.pile-illustration::after {
+  content: "";
+  position: absolute;
+  left: 12%;
+  right: 12%;
+  bottom: 18px;
+  height: 12px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.25);
+  filter: blur(4px);
+}
+
+.pile-illustration span {
+  position: absolute;
+  left: 50%;
+  bottom: calc(14px + var(--row) * 14px * var(--pile-scale));
+  width: calc(128px * var(--pile-scale));
+  height: calc(17px * var(--pile-scale));
+  border-radius: var(--radius-pill);
+  background:
+    radial-gradient(circle at calc(12px * var(--pile-scale)) 50%, #d9a24d 0 calc(4px * var(--pile-scale)), #6c3f1b calc(5px * var(--pile-scale)) calc(8px * var(--pile-scale)), transparent calc(9px * var(--pile-scale))),
+    linear-gradient(90deg, #8d5524, #c88435 42%, #6e401d);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  filter: brightness(var(--tint));
+  transform: translateX(calc(-50% + var(--x) * var(--pile-scale))) rotate(var(--rot));
+  box-shadow: 0 4px 8px rgba(0,0,0,0.18);
+}
+
+.woodpile-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 12px;
+}
+
+.woodpile-stage strong {
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.woodpile-stage span {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.woodpile-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.woodpile-stats div {
+  min-width: 0;
+  padding: 9px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(12, 21, 16, 0.34);
+}
+
+.woodpile-stats strong,
+.woodpile-stats span {
+  display: block;
+  text-align: center;
+}
+
+.woodpile-stats strong {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 900;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.woodpile-stats span {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-top: 2px;
+}
+
+.woodpile-progress {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.woodpile-progress-row,
+.woodpile-progress-note {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.woodpile-progress-row span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.woodpile-progress-row span:last-child {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.woodpile-progress-note {
+  color: var(--text-faint);
+  font-weight: 750;
+}
+
+.woodpile-progress-track {
+  height: 8px;
+  border: 1px solid rgba(62, 214, 105, 0.16);
+  border-radius: var(--radius-pill);
+  background: rgba(12, 21, 16, 0.52);
+  overflow: hidden;
+}
+
+.woodpile-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), #a9f39a);
+  box-shadow: 0 0 12px rgba(62, 214, 105, 0.28);
+  transition: width 220ms ease;
+}
+
+.woodpile-ranks {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.woodpile-rank {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(12, 21, 16, 0.3);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.woodpile-rank.me {
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.woodpile-rank span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.woodpile-rank strong {
+  color: currentColor;
+  flex-shrink: 0;
+}
+
+.woodpile-empty-rank {
+  margin-bottom: 12px;
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 750;
+  text-align: center;
+}
+
+.woodpile-deposit {
+  width: 100%;
+  height: 48px;
+  margin: 0 0 12px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: #0a1a0d;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 900;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 100ms ease, opacity 120ms ease;
+}
+
+.woodpile-deposit:active {
+  transform: scale(0.98);
+}
+
+.woodpile-deposit.disabled {
+  background: var(--surface);
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  cursor: default;
+}
+
+.woodpile-admin-tools {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px dashed rgba(201, 140, 42, 0.38);
+  border-radius: var(--radius-sm);
+  background: rgba(201, 140, 42, 0.08);
+  display: grid;
+  gap: 10px;
+}
+
+.admin-group-tools {
+  margin-top: 0;
+  margin-bottom: 12px;
+}
+
+.woodpile-admin-title {
+  color: var(--risk-text);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.woodpile-admin-select {
+  display: grid;
+  gap: 6px;
+}
+
+.woodpile-admin-select span {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.woodpile-admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.group-tutorial-overlay {
+  z-index: 35;
+}
+
+.group-tutorial-sheet {
+  gap: 16px;
+}
+
+.tutorial-steps {
+  display: grid;
+  gap: 8px;
+}
+
+.tutorial-steps div {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.tutorial-steps strong,
+.tutorial-steps span {
+  display: block;
+}
+
+.tutorial-steps strong {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 900;
+  margin-bottom: 3px;
+}
+
+.tutorial-steps span {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
 .group-picker {
   display: grid;
   gap: 8px;
@@ -1919,6 +2304,31 @@ html, body {
   grid-template-columns: 1fr;
   gap: 8px;
   padding: 0 16px 104px;
+}
+
+.achievement-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 0 16px 10px;
+}
+
+.achievement-tabs button {
+  height: 38px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.achievement-tabs button.active {
+  border-color: rgba(62, 214, 105, 0.35);
+  background: var(--accent-dim);
+  color: var(--accent);
 }
 
 .achievement-card {

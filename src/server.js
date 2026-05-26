@@ -54,14 +54,19 @@ import {
   woodVariant,
 } from "./woodRules.js";
 import {
+  activeGroupForUser,
   canCreateGroupWith,
   canSendGroupWood,
+  groupDepositTotal,
   groupMembers,
   groupStats,
   groupWoods,
+  isLegacyGroup,
+  legacyGroupMembershipCount,
   pendingGroupInvites,
   visibleGroups,
   visibleGroupWoodState,
+  WOODPILE_TIERS,
 } from "./groupRules.js";
 import { notifyUser, pushPublicConfig } from "./push.js";
 import { serveStatic } from "./static.js";
@@ -354,6 +359,16 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/groups/migration-notice/read") {
+    await dismissGroupMigrationNotice(user, res);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/groups/tutorial/read") {
+    await dismissGroupTutorial(user, res);
+    return;
+  }
+
   const groupInviteAction = url.pathname.match(
     /^\/api\/groups\/invites\/([^/]+)\/(accept|decline)$/,
   );
@@ -636,10 +651,18 @@ function appState(user) {
     achievements: achievementProgress(db, user.id),
     friends,
     groups: visibleGroups(db, user.id).map((group) => publicGroup(group, user.id)),
+    groupSystem: {
+      version: 2,
+      legacyGroupCount: legacyGroupMembershipCount(db, user.id),
+      migrationNoticeSeen: Boolean(user.groups_v2_notice_seen_at),
+      tutorialSeen: Boolean(user.groups_v2_tutorial_seen_at),
+      migratedAt: db.config.groups_v2_migrated_at || null,
+      tiers: WOODPILE_TIERS,
+    },
     groupInvites: pendingGroupInvites(db, user.id)
       .map((member) => {
         const group = db.groups.find((candidate) => candidate.id === member.group_id);
-        if (!group || group.dissolved_at) return null;
+        if (!group || group.dissolved_at || isLegacyGroup(group)) return null;
         return {
           id: member.id,
           group: publicGroup(group, user.id),
@@ -996,8 +1019,10 @@ async function recordAchievementEvent(userId, type, subjectId = null, meta = {})
 }
 
 async function createGroup(user, res, body) {
-  const name = cleanGroupName(body.name);
-  const memberIds = Array.isArray(body.memberIds) ? body.memberIds.map(String) : [];
+  const fallbackName = `${user.username}'s Woodpile`;
+  const name = cleanGroupName(body.name || fallbackName);
+  const memberIds = getAcceptedFriendIds(store.db, user.id)
+    .filter((memberId) => !activeGroupForUser(store.db, memberId));
   if (!name) {
     sendJson(res, 400, { error: "invalid_group_name" });
     return;
@@ -1016,6 +1041,8 @@ async function createGroup(user, res, body) {
       created_by: user.id,
       created_at: now,
       dissolved_at: null,
+      legacy_at: null,
+      woodpile_adjustment: 0,
     };
     db.groups.push(entry);
     db.group_members.push({
@@ -1046,7 +1073,7 @@ async function createGroup(user, res, body) {
       user_id: memberId,
       type: "group.invite",
       title: `You were invited to ${group.name}`,
-      body: `${user.username} is assembling Wood.`,
+      body: `${user.username} started a pile and left room for you.`,
       url: "/?tab=groups",
       actor_id: user.id,
       data: { groupId: group.id, invitedBy: user.id },
@@ -1070,6 +1097,22 @@ async function createGroup(user, res, body) {
   sendJson(res, 201, appState(user));
 }
 
+async function dismissGroupMigrationNotice(user, res) {
+  await store.write((db) => {
+    const fresh = db.users.find((candidate) => candidate.id === user.id);
+    if (fresh) fresh.groups_v2_notice_seen_at = nowIso();
+  });
+  sendJson(res, 200, appState(currentUserFromId(user.id)));
+}
+
+async function dismissGroupTutorial(user, res) {
+  await store.write((db) => {
+    const fresh = db.users.find((candidate) => candidate.id === user.id);
+    if (fresh) fresh.groups_v2_tutorial_seen_at = nowIso();
+  });
+  sendJson(res, 200, appState(currentUserFromId(user.id)));
+}
+
 async function respondToGroupInvite(user, res, membershipId, action) {
   const result = await store.write((db) => {
     const membership = db.group_members.find(
@@ -1079,13 +1122,21 @@ async function respondToGroupInvite(user, res, membershipId, action) {
         member.status === "pending",
     );
     if (!membership) return { error: "not_found" };
+    const group = db.groups.find((candidate) => candidate.id === membership.group_id);
+    if (!group || group.dissolved_at || isLegacyGroup(group)) return { error: "not_found" };
+    if (
+      action === "accept" &&
+      activeGroupForUser(db, user.id) &&
+      activeGroupForUser(db, user.id)?.id !== membership.group_id
+    ) {
+      return { error: "already_in_group" };
+    }
     membership.status = action === "accept" ? "accepted" : "declined";
     membership.updated_at = nowIso();
-    const group = db.groups.find((candidate) => candidate.id === membership.group_id);
     return { membership, group };
   });
   if (result.error) {
-    sendJson(res, 404, { error: result.error });
+    sendJson(res, result.error === "already_in_group" ? 409 : 404, { error: result.error });
     return;
   }
   if (action === "accept" && result.membership.invited_by) {
@@ -1456,64 +1507,57 @@ async function sendWood(user, res, recipientId, body) {
 
 async function sendGroupWood(user, res, groupId, body) {
   const group = store.db.groups.find((candidate) => candidate.id === groupId);
-  if (!group || group.dissolved_at) {
+  if (!group || group.dissolved_at || isLegacyGroup(group)) {
     sendJson(res, 404, { error: "not_found" });
     return;
   }
 
   const state = canSendGroupWood(store.db, user.id, groupId);
   if (!state.ok) {
-    sendJson(res, state.reason === "cooldown" ? 409 : 404, {
+    const missing = ["not_found", "not_member"].includes(state.reason);
+    sendJson(res, missing ? 404 : 409, {
       error: state.reason,
       expiresAt: state.expiresAt,
     });
     return;
   }
 
-  const seasonal = seasonalTheme(store.db);
-  const holdMs = Number(body.holdMs || 0);
-  const variant = woodVariant({ holdMs, seasonal });
   const wood = await store.write((db) => {
     const entry = {
       id: id("group_wood"),
       group_id: groupId,
       sender_id: user.id,
       sent_at: nowIso(),
-      type: variant.type,
-      label: variant.label,
-      hold_duration_ms: holdMs,
+      type: "deposit",
+      label: "Deposited Wood",
+      hold_duration_ms: 0,
+      amount: state.depositCost || 1,
     };
     db.group_woods.push(entry);
     return entry;
   });
 
-  const notification = woodNotification({
-    sender: `${user.username} in ${group.name}`,
-    wood: variant.label,
-    seasonal,
-  });
-  const recipients = groupMembers(store.db, groupId)
-    .map((member) => member.user_id)
-    .filter((memberId) => memberId !== user.id);
+  const updatedGroup = store.db.groups.find((candidate) => candidate.id === groupId);
+  const updatedStats = groupStats(store.db, groupId);
+  const memberIds = groupMembers(store.db, groupId).map((member) => member.user_id);
+  const recipients = memberIds.filter((memberId) => memberId !== user.id);
   for (const recipientId of recipients) {
     await createNotification({
       user_id: recipientId,
       type: "wood.group",
-      title: `${user.username} sent ${variant.label} to ${group.name}`,
-      body: "Group Wood Received",
+      title: "The Woodpile changed",
+      body: `${user.username} deposited ${wood.amount} Wood. ${updatedStats.stage.name}: ${updatedStats.woods_sent}`,
       url: `/?tab=groups&group=${encodeURIComponent(groupId)}`,
       actor_id: user.id,
       data: { groupId, woodId: wood.id },
       dedupe_key: `group_wood:${wood.id}:${recipientId}`,
     });
     await notifyAndPrune(recipientId, {
-      title: notification.title,
-      body: notification.body,
-      icon: notification.icon,
-      badge: notification.badge,
-      vibrate: notification.vibrate,
-      actions: notification.actions,
-      styleId: notification.id,
+      title: "The Woodpile changed",
+      body: `${user.username} added ${wood.amount}. The pile is now everyone's problem.`,
+      icon: "/notifications/wood-alert.png",
+      badge: "/notifications/wood-badge.png",
+      actions: [{ action: "open", title: "Inspect pile" }],
       url: `/?tab=groups&group=${encodeURIComponent(groupId)}`,
       groupId,
       woodId: wood.id,
@@ -1533,17 +1577,20 @@ async function sendGroupWood(user, res, groupId, body) {
   debugLog("group_wood.created", {
     woodId: wood.id,
     groupId,
-    groupName: group.name,
+    groupName: updatedGroup?.name || group.name,
     senderId: user.id,
     senderUsername: user.username,
     recipients: recipients.length,
-    type: variant.type,
+    pileSize: updatedStats.woods_sent,
+    pileStage: updatedStats.stage.name,
+    amount: wood.amount,
   });
   emitUserEvent(user.id, "app.changed", {
     reason: "group_wood.sent",
     woodId: wood.id,
     groupId,
   });
+  await evaluateAndNotifyAchievements(memberIds);
   sendJson(res, 201, appState(user));
 }
 
@@ -1568,6 +1615,7 @@ async function groupWoodHistory(user, res, groupId) {
       sentAt: wood.sent_at,
       label: wood.label || "Wood",
       type: wood.type || "normal",
+      amount: Number(wood.amount || 1),
     }));
   sendJson(res, 200, {
     group: group ? publicGroup(group, user.id) : null,
@@ -2104,6 +2152,116 @@ async function handleAdmin(user, req, res, url, body) {
     return;
   }
 
+  const setGroupTier = url.pathname.match(/^\/api\/admin\/groups\/([^/]+)\/tier$/);
+  if (req.method === "POST" && setGroupTier) {
+    const tierIndex = Number(body.tierIndex);
+    if (!Number.isInteger(tierIndex) || !WOODPILE_TIERS[tierIndex]) {
+      sendJson(res, 400, { error: "invalid_tier" });
+      return;
+    }
+    const result = await store.write((db) => {
+      const group = db.groups.find((candidate) => candidate.id === setGroupTier[1]);
+      if (!group || group.dissolved_at || isLegacyGroup(group)) return { error: "not_found" };
+      const target = WOODPILE_TIERS[tierIndex].minWood;
+      group.woodpile_adjustment = target - groupDepositTotal(db, group.id);
+      return { group, target, tier: WOODPILE_TIERS[tierIndex] };
+    });
+    if (result.error) {
+      sendJson(res, 404, { error: result.error });
+      return;
+    }
+    debugLog("group.admin_tier_set", {
+      adminId: user.id,
+      adminUsername: user.username,
+      groupId: result.group.id,
+      target: result.target,
+      tier: result.tier.name,
+    });
+    await evaluateAndNotifyAchievements(
+      groupMembers(store.db, result.group.id).map((member) => member.user_id),
+    );
+    emitGroupAppChanged(result.group.id, "group.admin_tier_set");
+    sendJson(res, 200, { admin: adminState(), app: appState(currentUserFromId(user.id)) });
+    return;
+  }
+
+  const grantGroupWood = url.pathname.match(/^\/api\/admin\/groups\/([^/]+)\/grant-wood$/);
+  if (req.method === "POST" && grantGroupWood) {
+    const amount = clamp(Number(body.amount || 999), 1, 10000);
+    const result = await store.write((db) => {
+      const group = db.groups.find((candidate) => candidate.id === grantGroupWood[1]);
+      if (!group || group.dissolved_at || isLegacyGroup(group)) return { error: "not_found" };
+      const membership = db.group_members.find((member) =>
+        member.group_id === group.id &&
+        member.user_id === user.id &&
+        member.status === "accepted"
+      );
+      if (!membership) return { error: "not_member" };
+      const entry = {
+        id: id("group_wood"),
+        group_id: group.id,
+        sender_id: user.id,
+        sent_at: nowIso(),
+        type: "admin_stockpile_grant",
+        label: "Admin Test Wood",
+        hold_duration_ms: 0,
+        amount,
+      };
+      db.group_woods.push(entry);
+      return { group, entry };
+    });
+    if (result.error) {
+      sendJson(res, result.error === "not_member" ? 403 : 404, { error: result.error });
+      return;
+    }
+    debugLog("group.admin_stockpile_granted", {
+      adminId: user.id,
+      adminUsername: user.username,
+      groupId: result.group.id,
+      amount: result.entry.amount,
+    });
+    emitUserEvent(user.id, "app.changed", {
+      reason: "group.admin_stockpile_granted",
+      groupId: result.group.id,
+    });
+    sendJson(res, 200, { admin: adminState(), app: appState(currentUserFromId(user.id)) });
+    return;
+  }
+
+  const resetGroupCooldown = url.pathname.match(/^\/api\/admin\/groups\/([^/]+)\/reset-my-cooldown$/);
+  if (req.method === "POST" && resetGroupCooldown) {
+    const result = await store.write((db) => {
+      const group = db.groups.find((candidate) => candidate.id === resetGroupCooldown[1]);
+      if (!group || group.dissolved_at || isLegacyGroup(group)) return { error: "not_found" };
+      db.group_woods.push({
+        id: id("group_wood"),
+        group_id: group.id,
+        sender_id: user.id,
+        sent_at: nowIso(),
+        type: "admin_cooldown_reset",
+        label: "Admin Cooldown Reset",
+        hold_duration_ms: 0,
+        amount: 0,
+      });
+      return { group };
+    });
+    if (result.error) {
+      sendJson(res, 404, { error: result.error });
+      return;
+    }
+    debugLog("group.admin_cooldown_reset", {
+      adminId: user.id,
+      adminUsername: user.username,
+      groupId: result.group.id,
+    });
+    emitUserEvent(user.id, "app.changed", {
+      reason: "group.admin_cooldown_reset",
+      groupId: result.group.id,
+    });
+    sendJson(res, 200, { admin: adminState(), app: appState(currentUserFromId(user.id)) });
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/admin/notification-styles") {
     sendJson(res, 200, { styles: notificationStyles() });
     return;
@@ -2217,12 +2375,16 @@ function publicGroup(group, viewerId = null) {
   const members = groupMembers(store.db, group.id, null);
   const acceptedMembers = members.filter((member) => member.status === "accepted");
   const pendingMembers = members.filter((member) => member.status === "pending");
+  const stats = groupStats(store.db, group.id);
   return {
     id: group.id,
     name: group.name,
     created_by: group.created_by,
+    owner: publicUser(store.db.users.find((user) => user.id === group.created_by)),
     created_at: group.created_at,
     dissolved_at: group.dissolved_at || null,
+    legacy_at: group.legacy_at || null,
+    woodpile_adjustment: Number(group.woodpile_adjustment || 0),
     members: acceptedMembers.map((member) =>
       publicUser(store.db.users.find((user) => user.id === member.user_id)),
     ).filter(Boolean),
@@ -2230,7 +2392,13 @@ function publicGroup(group, viewerId = null) {
       publicUser(store.db.users.find((user) => user.id === member.user_id)),
     ).filter(Boolean),
     wood: viewerId ? visibleGroupWoodState(store.db, viewerId, group.id) : null,
-    stats: groupStats(store.db, group.id),
+    stats: {
+      ...stats,
+      ranks: stats.ranks.map((rank) => ({
+        ...rank,
+        user: publicUser(store.db.users.find((user) => user.id === rank.userId)),
+      })),
+    },
   };
 }
 
@@ -2433,6 +2601,14 @@ function emitUsersEvent(userIds, event, payload = {}) {
   for (const userId of new Set(userIds.filter(Boolean))) {
     emitUserEvent(userId, event, payload);
   }
+}
+
+function emitGroupAppChanged(groupId, reason) {
+  emitUsersEvent(
+    groupMembers(store.db, groupId).map((member) => member.user_id),
+    "app.changed",
+    { reason, groupId },
+  );
 }
 
 function emitAllUsersEvent(event, payload = {}) {

@@ -14,6 +14,7 @@ export const state = {
   realtimeRefreshTimer: null,
   view: "home",
   homeTab: "friends",
+  achievementTab: "individual",
   adminTab: "overview",
   historyFriendId: null,
   historyData: null,

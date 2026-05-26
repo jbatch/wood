@@ -1,5 +1,6 @@
 import { id } from "./ids.js";
 import { config } from "./config.js";
+import { groupStats, visibleGroups, WOODPILE_TIERS } from "./groupRules.js";
 
 const SPEEDY_REPLY_MS = 10 * 1000;
 const LATE_REPLY_WINDOW_MS = 5 * 60 * 1000;
@@ -9,6 +10,59 @@ const CHAIN_WINDOW_MS = 60 * 1000;
 const MAX_LONG_WOOD_MS = 9250;
 const MUTUAL_LUMBER_THRESHOLD = 5;
 const INNER_CIRCLE_THRESHOLD = 50;
+
+const GROUP_CONTRIBUTION_ACHIEVEMENTS = [
+  {
+    slug: "pile-participant",
+    name: "Pile Participant",
+    description: "Contribute your first Wood to the group pile",
+    icon: "pile",
+    criteria_type: "group_contribution",
+    criteria_value: 1,
+    category: "group",
+  },
+  {
+    slug: "regular-contributor",
+    name: "Regular Contributor",
+    description: "Contribute 25 Wood to the group pile",
+    icon: "25",
+    criteria_type: "group_contribution",
+    criteria_value: 25,
+    category: "group",
+  },
+  {
+    slug: "load-bearing",
+    name: "Load Bearing",
+    description: "Contribute 100 Wood to the group pile",
+    icon: "100",
+    criteria_type: "group_contribution",
+    criteria_value: 100,
+    category: "group",
+  },
+  {
+    slug: "pillar-of-the-pile",
+    name: "Pillar of the Pile",
+    description: "Contribute 250 Wood to the group pile",
+    icon: "250",
+    criteria_type: "group_contribution",
+    criteria_value: 250,
+    category: "group",
+  },
+];
+
+const GROUP_TIER_ACHIEVEMENTS = WOODPILE_TIERS
+  .filter((tier) => tier.minWood > 0)
+  .map((tier) => ({
+    slug: `group-tier-${slugify(tier.name)}`,
+    name: tier.name,
+    description: `Be in a group when the Woodpile reaches ${tier.name}`,
+    icon: "???",
+    criteria_type: "group_tier",
+    criteria_value: tier.name,
+    category: "group",
+    secret: true,
+    hide_name_until_earned: true,
+  }));
 
 export const ACHIEVEMENTS = [
   {
@@ -429,8 +483,13 @@ export const ACHIEVEMENTS = [
     criteria_value: "declined_transaction",
     secret: true,
   },
+  ...GROUP_CONTRIBUTION_ACHIEVEMENTS,
+  ...GROUP_TIER_ACHIEVEMENTS,
 ].map((achievement) => ({
+  category: "individual",
   secret: false,
+  hide_name_until_earned: false,
+  legacy: false,
   ...achievement,
 }));
 
@@ -441,7 +500,10 @@ export function achievementDefinitions() {
 export function normalizeAchievementDef(definition) {
   return {
     ...definition,
+    category: definition.category || "individual",
     secret: Boolean(definition.secret),
+    hide_name_until_earned: Boolean(definition.hide_name_until_earned),
+    legacy: Boolean(definition.legacy),
   };
 }
 
@@ -467,13 +529,16 @@ export function achievementProgress(db, userId) {
   return db.achievements_def.map((definition) => {
     const earned = earnedByAchievement.get(definition.id);
     const hidden = definition.secret && !earned;
+    const hiddenName = hidden && definition.hide_name_until_earned;
     return {
       id: definition.id,
       slug: definition.slug,
-      name: definition.name,
+      name: hiddenName ? "Secret achievement" : definition.name,
       description: hidden ? "Secret achievement" : definition.description,
-      icon: definition.icon,
+      icon: hiddenName ? "???" : definition.icon,
+      category: definition.category || "individual",
       secret: Boolean(definition.secret),
+      hide_name_until_earned: Boolean(definition.hide_name_until_earned),
       earned: Boolean(earned),
       earned_at: earned?.earned_at || null,
     };
@@ -496,6 +561,7 @@ export function evaluateAchievements(db, userId, context = {}) {
   addThresholdSlugs(slugs, "woods_sent", sent.length);
   addThresholdSlugs(slugs, "friends", friendCount);
   addThresholdSlugs(slugs, "streak", bestStreak);
+  addGroupAchievementSlugs(db, userId, slugs);
 
   if (sent.some((wood) => Number(wood.hold_duration_ms || 0) >= 10000)) {
     slugs.add("long-game");
@@ -553,7 +619,7 @@ export function awardAchievements(db, userId, slugs, earnedAt = new Date().toISO
   const created = [];
   for (const slug of slugs) {
     const definition = db.achievements_def.find((item) => item.slug === slug);
-    if (!definition) continue;
+    if (!definition || definition.legacy) continue;
     const alreadyEarned = db.achievements_earned.some(
       (earned) => earned.user_id === userId && earned.achievement_id === definition.id,
     );
@@ -582,6 +648,33 @@ function addThresholdSlugs(slugs, criteriaType, count) {
     if (definition.criteria_type !== criteriaType) continue;
     if (count >= Number(definition.criteria_value)) slugs.add(definition.slug);
   }
+}
+
+function addGroupAchievementSlugs(db, userId, slugs) {
+  const groups = visibleGroups(db, userId);
+  const contribution = personalGroupContribution(db, userId);
+  addThresholdSlugs(slugs, "group_contribution", contribution);
+
+  for (const group of groups) {
+    const stats = groupStats(db, group.id);
+    for (const tier of WOODPILE_TIERS) {
+      if (tier.minWood <= 0 || stats.woods_sent < tier.minWood) continue;
+      slugs.add(`group-tier-${slugify(tier.name)}`);
+    }
+  }
+}
+
+function personalGroupContribution(db, userId) {
+  return (db.group_woods || [])
+    .filter((wood) => wood.sender_id === userId && wood.type === "deposit")
+    .reduce((sum, wood) => sum + Number(wood.amount || 1), 0);
+}
+
+function slugify(value) {
+  return String(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 function acceptedFriendCount(db, userId) {

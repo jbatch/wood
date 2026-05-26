@@ -9,6 +9,7 @@ import {
 import {
   canCreateGroupWith,
   canSendGroupWood,
+  personalStockpile,
   visibleGroupWoodState,
 } from "../src/groupRules.js";
 import {
@@ -81,18 +82,44 @@ test("groups can only invite existing accepted friends", () => {
   const db = dbWithWoods();
 
   assert.equal(canCreateGroupWith(db, "a", ["b"]).ok, true);
-  assert.equal(canCreateGroupWith(db, "a", []).reason, "group_needs_members");
+  assert.equal(canCreateGroupWith(db, "a", []).ok, true);
   assert.equal(canCreateGroupWith(db, "a", ["c"]).reason, "friends_only");
-});
 
-test("group wood cooldown clears when another member woods back", () => {
-  const db = dbWithWoods();
   db.groups.push({
     id: "group_1",
     name: "Friday Woods",
     created_by: "a",
     created_at: "2026-05-22T00:00:00.000Z",
     dissolved_at: null,
+    legacy_at: null,
+  });
+  db.group_members.push({
+    id: "member_1",
+    group_id: "group_1",
+    user_id: "a",
+    status: "accepted",
+  });
+  assert.equal(canCreateGroupWith(db, "a", ["b"]).reason, "already_in_group");
+});
+
+test("group deposits spend received wood from a personal stockpile", () => {
+  const db = dbWithWoods([
+    {
+      id: "wood_1",
+      sender_id: "b",
+      recipient_id: "a",
+      sent_at: "2026-05-22T00:00:00.000Z",
+      type: "normal",
+      label: "Wood",
+    },
+  ]);
+  db.groups.push({
+    id: "group_1",
+    name: "Friday Woods",
+    created_by: "a",
+    created_at: "2026-05-22T00:00:00.000Z",
+    dissolved_at: null,
+    legacy_at: null,
   });
   db.group_members.push(
     {
@@ -108,31 +135,172 @@ test("group wood cooldown clears when another member woods back", () => {
       status: "accepted",
     },
   );
+
+  assert.equal(personalStockpile(db, "a"), 1);
+  assert.equal(visibleGroupWoodState(db, "a", "group_1").depositCost, 1);
+  assert.equal(canSendGroupWood(db, "a", "group_1", Date.parse("2026-05-22T01:00:00.000Z")).ok, true);
+  assert.equal(visibleGroupWoodState(db, "a", "group_1").stockpile, 1);
+
   db.group_woods.push({
     id: "group_wood_1",
     group_id: "group_1",
     sender_id: "a",
     sent_at: "2026-05-22T00:00:00.000Z",
-    type: "normal",
-    label: "Wood",
+    type: "deposit",
+    label: "Deposited Wood",
+    amount: 1,
   });
 
   const blocked = canSendGroupWood(db, "a", "group_1", Date.parse("2026-05-22T01:00:00.000Z"));
   assert.equal(blocked.ok, false);
-  assert.equal(blocked.reason, "cooldown");
-  assert.equal(visibleGroupWoodState(db, "b", "group_1").needsReply, true);
+  assert.equal(blocked.reason, "insufficient_stockpile");
+  assert.equal(personalStockpile(db, "a"), 0);
 
-  db.group_woods.push({
-    id: "group_wood_2",
-    group_id: "group_1",
+  db.woods.push({
+    id: "wood_2",
     sender_id: "b",
-    sent_at: "2026-05-22T01:01:00.000Z",
+    recipient_id: "a",
+    sent_at: "2026-05-22T01:30:00.000Z",
     type: "normal",
     label: "Wood",
   });
 
+  const cooldown = canSendGroupWood(db, "a", "group_1", Date.parse("2026-05-22T00:30:00.000Z"));
+  assert.equal(cooldown.ok, false);
+  assert.equal(cooldown.reason, "deposit_cooldown");
+  assert.equal(canSendGroupWood(db, "a", "group_1", Date.parse("2026-05-22T01:01:00.000Z")).ok, true);
+});
+
+test("group deposit cost rises as the pile reaches tiers", () => {
+  const db = dbWithWoods(
+    Array.from({ length: 5 }, (_, index) => ({
+      id: `wood_${index}`,
+      sender_id: "b",
+      recipient_id: "a",
+      sent_at: `2026-05-22T0${index}:00:00.000Z`,
+      type: "normal",
+      label: "Wood",
+    })),
+  );
+  db.groups.push({
+    id: "group_1",
+    name: "Friday Woods",
+    created_by: "a",
+    created_at: "2026-05-22T00:00:00.000Z",
+    dissolved_at: null,
+    legacy_at: null,
+  });
+  db.group_members.push({
+    id: "member_1",
+    group_id: "group_1",
+    user_id: "a",
+    status: "accepted",
+  });
+  db.group_woods.push(
+    {
+      id: "group_wood_1",
+      group_id: "group_1",
+      sender_id: "a",
+      sent_at: "2026-05-22T00:00:00.000Z",
+      type: "deposit",
+      label: "Deposited Wood",
+      amount: 1,
+    },
+    {
+      id: "group_wood_2",
+      group_id: "group_1",
+      sender_id: "b",
+      sent_at: "2026-05-22T00:00:00.000Z",
+      type: "deposit",
+      label: "Deposited Wood",
+      amount: 4,
+    },
+  );
+
+  const state = canSendGroupWood(db, "a", "group_1", Date.parse("2026-05-22T02:00:00.000Z"));
+  assert.equal(state.ok, true);
+  assert.equal(state.depositCost, 2);
+});
+
+test("group stockpiles ignore woods received before the v2 migration", () => {
+  const db = dbWithWoods([
+    {
+      id: "wood_old",
+      sender_id: "b",
+      recipient_id: "a",
+      sent_at: "2026-05-21T23:59:59.000Z",
+      type: "normal",
+      label: "Wood",
+    },
+    {
+      id: "wood_new",
+      sender_id: "b",
+      recipient_id: "a",
+      sent_at: "2026-05-22T00:00:00.000Z",
+      type: "normal",
+      label: "Wood",
+    },
+  ]);
+  db.config.groups_v2_migrated_at = "2026-05-22T00:00:00.000Z";
+
+  assert.equal(personalStockpile(db, "a"), 1);
+});
+
+test("admin group tools can grant stockpile wood and reset cooldown", () => {
+  const db = dbWithWoods();
+  db.groups.push({
+    id: "group_1",
+    name: "Friday Woods",
+    created_by: "a",
+    created_at: "2026-05-22T00:00:00.000Z",
+    dissolved_at: null,
+    legacy_at: null,
+  });
+  db.group_members.push({
+    id: "member_1",
+    group_id: "group_1",
+    user_id: "a",
+    status: "accepted",
+  });
+  db.group_woods.push(
+    {
+      id: "grant_1",
+      group_id: "group_1",
+      sender_id: "a",
+      sent_at: "2026-05-22T00:00:00.000Z",
+      type: "admin_stockpile_grant",
+      label: "Admin Test Wood",
+      amount: 999,
+    },
+    {
+      id: "deposit_1",
+      group_id: "group_1",
+      sender_id: "a",
+      sent_at: "2026-05-22T01:00:00.000Z",
+      type: "deposit",
+      label: "Deposited Wood",
+      amount: 1,
+    },
+  );
+
+  assert.equal(personalStockpile(db, "a"), 998);
   assert.equal(
-    canSendGroupWood(db, "a", "group_1", Date.parse("2026-05-22T01:02:00.000Z")).ok,
+    canSendGroupWood(db, "a", "group_1", Date.parse("2026-05-22T01:30:00.000Z")).reason,
+    "deposit_cooldown",
+  );
+
+  db.group_woods.push({
+    id: "reset_1",
+    group_id: "group_1",
+    sender_id: "a",
+    sent_at: "2026-05-22T01:31:00.000Z",
+    type: "admin_cooldown_reset",
+    label: "Admin Cooldown Reset",
+    amount: 0,
+  });
+
+  assert.equal(
+    canSendGroupWood(db, "a", "group_1", Date.parse("2026-05-22T01:32:00.000Z")).ok,
     true,
   );
 });
@@ -191,6 +359,68 @@ test("secret achievements show names while hiding unlock methods", () => {
   assert.equal(hidden.description, "Secret achievement");
   assert.equal(hidden.icon, "nope");
   assert.equal(hidden.earned, false);
+});
+
+test("group tier achievements hide names until earned", () => {
+  const db = dbWithWoods();
+  ensureAchievementDefinitions(db);
+
+  const hidden = achievementProgress(db, "a")
+    .find((achievement) => achievement.slug === "group-tier-private-pile");
+
+  assert.equal(hidden.category, "group");
+  assert.equal(hidden.name, "Secret achievement");
+  assert.equal(hidden.description, "Secret achievement");
+  assert.equal(hidden.icon, "???");
+});
+
+test("group achievements award personal contributions and shared tiers", () => {
+  const db = dbWithWoods();
+  db.groups.push({
+    id: "group_1",
+    name: "Friday Woods",
+    created_by: "a",
+    created_at: "2026-05-22T00:00:00.000Z",
+    dissolved_at: null,
+    legacy_at: null,
+    woodpile_adjustment: 0,
+  });
+  db.group_members.push(
+    {
+      id: "member_1",
+      group_id: "group_1",
+      user_id: "a",
+      status: "accepted",
+    },
+    {
+      id: "member_2",
+      group_id: "group_1",
+      user_id: "b",
+      status: "accepted",
+    },
+  );
+  db.group_woods.push({
+    id: "group_wood_1",
+    group_id: "group_1",
+    sender_id: "a",
+    sent_at: "2026-05-22T00:00:00.000Z",
+    type: "deposit",
+    label: "Deposited Wood",
+    amount: 2,
+  });
+
+  const aliceSlugs = evaluateAchievements(db, "a").map((achievement) => achievement.slug);
+  const bobSlugs = evaluateAchievements(db, "b").map((achievement) => achievement.slug);
+
+  assert(aliceSlugs.includes("pile-participant"));
+  assert(aliceSlugs.includes("group-tier-private-pile"));
+  assert(!bobSlugs.includes("pile-participant"));
+  assert(bobSlugs.includes("group-tier-private-pile"));
+
+  const earnedTier = achievementProgress(db, "b")
+    .find((achievement) => achievement.slug === "group-tier-private-pile");
+  assert.equal(earnedTier.name, "Private Pile");
+  assert.equal(earnedTier.description, "Be in a group when the Woodpile reaches Private Pile");
 });
 
 test("admin can reset earned achievements for one user", () => {

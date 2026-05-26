@@ -250,17 +250,43 @@ function adminGroupsHtml() {
 }
 
 function adminGroupCardHtml(group) {
+  const stage = group.stats?.stage;
   return `
     <div class="admin-card user-card">
       <div class="admin-card-main">
         <div class="admin-title">${escHtml(group.name)} ${group.dissolved_at ? `<span class="role-chip">dissolved</span>` : ""}</div>
         <div class="admin-sub">${group.members.map((member) => escHtml(member.username)).join(", ") || "No members"}</div>
         <div class="admin-meta">
-          ${group.members.length} members · ${group.pendingMembers.length} pending · ${group.stats.woods_sent} Woods
+          ${group.members.length} members · ${group.pendingMembers.length} pending · ${group.stats.woods_sent} Woods · ${escHtml(stage?.name || "No tier")}
         </div>
       </div>
+      ${group.dissolved_at ? "" : adminGroupToolsHtml(group)}
       <div class="admin-actions">
         ${group.dissolved_at ? "" : `<button class="chip-btn danger-chip" data-dissolve-group="${group.id}">Dissolve</button>`}
+      </div>
+    </div>
+  `;
+}
+
+function adminGroupToolsHtml(group) {
+  const tiers = state.data?.groupSystem?.tiers || [];
+  const currentIndex = tiers.findIndex((tier) => tier.name === group.stats?.stage?.name);
+  return `
+    <div class="woodpile-admin-tools admin-group-tools">
+      <div class="woodpile-admin-title">Pile tools</div>
+      <label class="woodpile-admin-select">
+        <span>Current tier</span>
+        <select class="field-input" data-admin-group-tier="${escHtml(group.id)}">
+          ${tiers.map((tier, index) => `
+            <option value="${index}" ${index === currentIndex ? "selected" : ""}>
+              ${escHtml(tier.name)} (${tier.minWood}+)
+            </option>
+          `).join("")}
+        </select>
+      </label>
+      <div class="woodpile-admin-actions">
+        <button class="chip-btn" type="button" data-admin-grant-wood="${escHtml(group.id)}">Give me 999 Wood</button>
+        <button class="chip-btn" type="button" data-admin-reset-cooldown="${escHtml(group.id)}">Reset my cooldown</button>
       </div>
     </div>
   `;
@@ -437,6 +463,40 @@ function bindAdmin(ctx) {
     btn.addEventListener("click", async () => {
       state.admin = await api(`/api/admin/groups/${btn.dataset.dissolveGroup}/dissolve`, { method: "POST" });
       await loadApp();
+      renderAdmin(ctx);
+    });
+  });
+  document.querySelectorAll("[data-admin-group-tier]").forEach((select) => {
+    select.addEventListener("change", async () => {
+      const response = await api(`/api/admin/groups/${select.dataset.adminGroupTier}/tier`, {
+        method: "POST",
+        body: { tierIndex: Number(select.value) },
+      });
+      state.admin = response.admin;
+      state.data = response.app;
+      renderAdmin(ctx);
+    });
+  });
+  document.querySelectorAll("[data-admin-grant-wood]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const response = await api(`/api/admin/groups/${btn.dataset.adminGrantWood}/grant-wood`, {
+        method: "POST",
+        body: { amount: 999 },
+      });
+      state.admin = response.admin;
+      state.data = response.app;
+      state.error = "Added 999 test Wood to your sockpile";
+      renderAdmin(ctx);
+    });
+  });
+  document.querySelectorAll("[data-admin-reset-cooldown]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const response = await api(`/api/admin/groups/${btn.dataset.adminResetCooldown}/reset-my-cooldown`, {
+        method: "POST",
+      });
+      state.admin = response.admin;
+      state.data = response.app;
+      state.error = "Reset your group deposit cooldown";
       renderAdmin(ctx);
     });
   });

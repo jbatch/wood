@@ -67,6 +67,23 @@ export async function createStore(file = config.dbFile) {
       db.config.streak_model = STREAK_MODEL;
     });
   }
+  if (!store.db.config.groups_v2_migrated_at) {
+    await store.write((db) => {
+      const migratedAt = nowIso();
+      for (const group of db.groups || []) {
+        if (!group.legacy_at) group.legacy_at = migratedAt;
+      }
+      for (const achievement of db.achievements_def || []) {
+        if (
+          String(achievement.criteria_type || "").startsWith("group") ||
+          String(achievement.criteria_value || "").startsWith("group_")
+        ) {
+          achievement.legacy = true;
+        }
+      }
+      db.config.groups_v2_migrated_at = migratedAt;
+    });
+  }
   await store.write((db) => ensureAchievementDefinitions(db));
   store.db = loadSnapshot(sqlite);
   return store;
@@ -86,6 +103,8 @@ function migrate(sqlite) {
       birthday_day INTEGER,
       birthday_visible INTEGER NOT NULL DEFAULT 0,
       notification_snoozed_until TEXT,
+      groups_v2_notice_seen_at TEXT,
+      groups_v2_tutorial_seen_at TEXT,
       pwa_installed_at TEXT,
       pwa_last_seen_at TEXT,
       pwa_display_mode TEXT,
@@ -189,6 +208,8 @@ function migrate(sqlite) {
       created_by TEXT NOT NULL,
       created_at TEXT NOT NULL,
       dissolved_at TEXT,
+      legacy_at TEXT,
+      woodpile_adjustment INTEGER NOT NULL DEFAULT 0,
       FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE
     );
 
@@ -214,6 +235,7 @@ function migrate(sqlite) {
       type TEXT NOT NULL,
       label TEXT NOT NULL,
       hold_duration_ms INTEGER NOT NULL DEFAULT 0,
+      amount INTEGER NOT NULL DEFAULT 1,
       FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
       FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE
     );
@@ -239,7 +261,10 @@ function migrate(sqlite) {
       name TEXT NOT NULL,
       description TEXT NOT NULL,
       icon TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'individual',
       secret INTEGER NOT NULL DEFAULT 0,
+      hide_name_until_earned INTEGER NOT NULL DEFAULT 0,
+      legacy INTEGER NOT NULL DEFAULT 0,
       criteria_type TEXT NOT NULL,
       criteria_value TEXT NOT NULL
     );
@@ -287,6 +312,8 @@ function migrate(sqlite) {
   ensureColumn(sqlite, "users", "birthday_day", "INTEGER");
   ensureColumn(sqlite, "users", "birthday_visible", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(sqlite, "users", "notification_snoozed_until", "TEXT");
+  ensureColumn(sqlite, "users", "groups_v2_notice_seen_at", "TEXT");
+  ensureColumn(sqlite, "users", "groups_v2_tutorial_seen_at", "TEXT");
   ensureColumn(sqlite, "users", "pwa_installed_at", "TEXT");
   ensureColumn(sqlite, "users", "pwa_last_seen_at", "TEXT");
   ensureColumn(sqlite, "users", "pwa_display_mode", "TEXT");
@@ -295,6 +322,12 @@ function migrate(sqlite) {
   ensureColumn(sqlite, "woods", "streak_count_after", "INTEGER");
   ensureColumn(sqlite, "woods", "streak_incremented", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(sqlite, "streaks", "milestones_sent", "TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn(sqlite, "groups", "legacy_at", "TEXT");
+  ensureColumn(sqlite, "groups", "woodpile_adjustment", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(sqlite, "group_woods", "amount", "INTEGER NOT NULL DEFAULT 1");
+  ensureColumn(sqlite, "achievements_def", "category", "TEXT NOT NULL DEFAULT 'individual'");
+  ensureColumn(sqlite, "achievements_def", "hide_name_until_earned", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(sqlite, "achievements_def", "legacy", "INTEGER NOT NULL DEFAULT 0");
 }
 
 function ensureColumn(sqlite, table, column, definition) {
@@ -327,6 +360,8 @@ async function seedFirstAdmin(store) {
       birthday_day: null,
       birthday_visible: false,
       notification_snoozed_until: null,
+      groups_v2_notice_seen_at: null,
+      groups_v2_tutorial_seen_at: null,
       pwa_installed_at: null,
       pwa_last_seen_at: null,
       pwa_display_mode: null,
@@ -381,6 +416,8 @@ function normalizeDb(db) {
       birthday_day: user.birthday_day ?? null,
       birthday_visible: Boolean(user.birthday_visible),
       notification_snoozed_until: user.notification_snoozed_until || null,
+      groups_v2_notice_seen_at: user.groups_v2_notice_seen_at || null,
+      groups_v2_tutorial_seen_at: user.groups_v2_tutorial_seen_at || null,
       pwa_installed_at: user.pwa_installed_at || null,
       pwa_last_seen_at: user.pwa_last_seen_at || null,
       pwa_display_mode: user.pwa_display_mode || null,
@@ -414,6 +451,8 @@ function normalizeDb(db) {
     groups: (db.groups || []).map((group) => ({
       ...group,
       dissolved_at: group.dissolved_at || null,
+      legacy_at: group.legacy_at || null,
+      woodpile_adjustment: Number(group.woodpile_adjustment || 0),
     })),
     group_members: db.group_members || [],
     group_woods: (db.group_woods || []).map((wood) => ({
@@ -421,6 +460,7 @@ function normalizeDb(db) {
       type: wood.type || "normal",
       label: wood.label || "Wood",
       hold_duration_ms: Number(wood.hold_duration_ms || 0),
+      amount: Number(wood.amount || 1),
     })),
     streaks: (db.streaks || []).map((streak) => ({
       ...streak,
@@ -469,6 +509,7 @@ function persistSnapshot(sqlite, db) {
         (
           id, username, email, password_hash, role, suspended, favourite_wood,
           birthday_month, birthday_day, birthday_visible, notification_snoozed_until,
+          groups_v2_notice_seen_at, groups_v2_tutorial_seen_at,
           pwa_installed_at, pwa_last_seen_at, pwa_display_mode,
           created_at, last_active_at, deleted_at
         )
@@ -476,6 +517,7 @@ function persistSnapshot(sqlite, db) {
         (
           @id, @username, @email, @password_hash, @role, @suspended, @favourite_wood,
           @birthday_month, @birthday_day, @birthday_visible, @notification_snoozed_until,
+          @groups_v2_notice_seen_at, @groups_v2_tutorial_seen_at,
           @pwa_installed_at, @pwa_last_seen_at, @pwa_display_mode,
           @created_at, @last_active_at, @deleted_at
         )
@@ -486,6 +528,8 @@ function persistSnapshot(sqlite, db) {
         suspended: user.suspended ? 1 : 0,
         birthday_visible: user.birthday_visible ? 1 : 0,
         notification_snoozed_until: user.notification_snoozed_until || null,
+        groups_v2_notice_seen_at: user.groups_v2_notice_seen_at || null,
+        groups_v2_tutorial_seen_at: user.groups_v2_tutorial_seen_at || null,
         pwa_installed_at: user.pwa_installed_at || null,
         pwa_last_seen_at: user.pwa_last_seen_at || null,
         pwa_display_mode: user.pwa_display_mode || null,
@@ -594,14 +638,16 @@ function persistSnapshot(sqlite, db) {
 
     const insertGroup = sqlite.prepare(`
       INSERT INTO groups
-        (id, name, created_by, created_at, dissolved_at)
+        (id, name, created_by, created_at, dissolved_at, legacy_at, woodpile_adjustment)
       VALUES
-        (@id, @name, @created_by, @created_at, @dissolved_at)
+        (@id, @name, @created_by, @created_at, @dissolved_at, @legacy_at, @woodpile_adjustment)
     `);
     for (const group of snapshot.groups) {
       insertGroup.run({
         ...group,
         dissolved_at: group.dissolved_at || null,
+        legacy_at: group.legacy_at || null,
+        woodpile_adjustment: Number(group.woodpile_adjustment || 0),
       });
     }
 
@@ -620,14 +666,15 @@ function persistSnapshot(sqlite, db) {
 
     const insertGroupWood = sqlite.prepare(`
       INSERT INTO group_woods
-        (id, group_id, sender_id, sent_at, type, label, hold_duration_ms)
+        (id, group_id, sender_id, sent_at, type, label, hold_duration_ms, amount)
       VALUES
-        (@id, @group_id, @sender_id, @sent_at, @type, @label, @hold_duration_ms)
+        (@id, @group_id, @sender_id, @sent_at, @type, @label, @hold_duration_ms, @amount)
     `);
     for (const wood of snapshot.group_woods) {
       insertGroupWood.run({
         ...wood,
         hold_duration_ms: Number(wood.hold_duration_ms || 0),
+        amount: Number(wood.amount || 1),
       });
     }
 
@@ -654,18 +701,22 @@ function persistSnapshot(sqlite, db) {
     const insertAchievementDef = sqlite.prepare(`
       INSERT INTO achievements_def
         (
-          id, slug, name, description, icon, secret, criteria_type, criteria_value
+          id, slug, name, description, icon, category, secret, hide_name_until_earned,
+          legacy, criteria_type, criteria_value
         )
       VALUES
         (
-          @id, @slug, @name, @description, @icon, @secret, @criteria_type,
-          @criteria_value
+          @id, @slug, @name, @description, @icon, @category, @secret,
+          @hide_name_until_earned, @legacy, @criteria_type, @criteria_value
         )
     `);
     for (const achievement of snapshot.achievements_def) {
       insertAchievementDef.run({
         ...achievement,
+        category: achievement.category || "individual",
         secret: achievement.secret ? 1 : 0,
+        hide_name_until_earned: achievement.hide_name_until_earned ? 1 : 0,
+        legacy: achievement.legacy ? 1 : 0,
         criteria_value: String(achievement.criteria_value),
       });
     }
