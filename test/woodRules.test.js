@@ -643,6 +643,22 @@ test("achievement events unlock non-wood UI rituals", () => {
       meta_json: "{}",
       created_at: "2026-05-22T00:05:00.000Z",
     },
+    {
+      id: "event_7",
+      user_id: "a",
+      type: "bug_report_submitted",
+      subject_id: "bug_1",
+      meta_json: "{}",
+      created_at: "2026-05-22T00:06:00.000Z",
+    },
+    {
+      id: "event_8",
+      user_id: "a",
+      type: "bug_report_valid",
+      subject_id: "bug_1",
+      meta_json: "{}",
+      created_at: "2026-05-22T00:07:00.000Z",
+    },
   );
   ensureAchievementDefinitions(db);
 
@@ -654,6 +670,8 @@ test("achievement events unlock non-wood UI rituals", () => {
   assert.ok(slugs.includes("self-control"));
   assert.ok(slugs.includes("mile-high-wood"));
   assert.ok(slugs.includes("unsolicited-wood"));
+  assert.ok(slugs.includes("qa-department"));
+  assert.ok(slugs.includes("termite-inspector"));
 });
 
 test("new relationship achievements avoid duplicating old basic milestones", () => {

@@ -82,6 +82,8 @@ let realtimeEventId = 0;
 const REALTIME_HEARTBEAT_MS = 25000;
 const NOTIFICATION_HISTORY_LIMIT = 100;
 const NOTIFICATION_BACKFILL_DAYS = 30;
+const BUG_REPORT_MIN_LENGTH = 4;
+const BUG_REPORT_MAX_LENGTH = 1200;
 const PWA_DISPLAY_MODES = new Set([
   "browser",
   "standalone",
@@ -137,7 +139,6 @@ const ACHIEVEMENT_EVENT_TYPES = new Set([
   "long_wood_cancelled",
   "long_wood_overcooked",
   "super_wood_declined",
-  "bug_report_submitted",
 ]);
 
 await backfillNotificationsIfNeeded();
@@ -334,6 +335,11 @@ async function handleApi(req, res, url) {
 
   if (req.method === "POST" && url.pathname === "/api/achievement-events") {
     await createAchievementEvent(user, res, body);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/bug-reports") {
+    await createBugReport(user, res, body);
     return;
   }
 
@@ -1019,6 +1025,53 @@ async function createAchievementEvent(user, res, body) {
   await recordAchievementEvent(user.id, type, subjectId, body.meta || {});
   await evaluateAndNotifyAchievements([user.id]);
   sendJson(res, 200, appState(currentUserFromId(user.id)));
+}
+
+async function createBugReport(user, res, body) {
+  const text = cleanBugReportText(body.text);
+  if (!text) {
+    sendJson(res, 400, { error: "invalid_bug_report" });
+    return;
+  }
+  const freshUser = currentUserFromId(user.id);
+  if (freshUser?.bug_reports_blocked_at) {
+    sendJson(res, 403, { error: "bug_reports_blocked" });
+    return;
+  }
+
+  const report = await store.write((db) => {
+    const entry = {
+      id: id("bug_report"),
+      user_id: user.id,
+      text,
+      status: "open",
+      created_at: nowIso(),
+      closed_at: null,
+      closed_by: null,
+      close_reason: null,
+    };
+    db.bug_reports ||= [];
+    db.bug_reports.push(entry);
+    db.achievement_events ||= [];
+    db.achievement_events.push({
+      id: id("ach_event"),
+      user_id: user.id,
+      type: "bug_report_submitted",
+      subject_id: entry.id,
+      meta_json: JSON.stringify({ length: text.length }),
+      created_at: entry.created_at,
+    });
+    return entry;
+  });
+  debugLog("bug_report.created", {
+    reportId: report.id,
+    userId: user.id,
+    username: user.username,
+    length: text.length,
+  });
+  await evaluateAndNotifyAchievements([user.id]);
+  emitAdminAppChanged("bug_report.created", { reportId: report.id, userId: user.id });
+  sendJson(res, 201, appState(currentUserFromId(user.id)));
 }
 
 async function recordAchievementEvent(userId, type, subjectId = null, meta = {}) {
@@ -2214,6 +2267,79 @@ async function handleAdmin(user, req, res, url, body) {
     return;
   }
 
+  const bugReportClose = url.pathname.match(/^\/api\/admin\/bug-reports\/([^/]+)\/close$/);
+  if (req.method === "POST" && bugReportClose) {
+    const status = body.status === "legitimate" ? "legitimate" : "not_bug";
+    const result = await store.write((db) => {
+      const report = (db.bug_reports || []).find((candidate) => candidate.id === bugReportClose[1]);
+      if (!report) return { error: "not_found" };
+      report.status = status;
+      report.closed_at = nowIso();
+      report.closed_by = user.id;
+      report.close_reason = status;
+      if (status === "legitimate") {
+        db.achievement_events ||= [];
+        db.achievement_events.push({
+          id: id("ach_event"),
+          user_id: report.user_id,
+          type: "bug_report_valid",
+          subject_id: report.id,
+          meta_json: JSON.stringify({ closedBy: user.id }),
+          created_at: report.closed_at,
+        });
+      }
+      return { report };
+    });
+    if (result.error) {
+      sendJson(res, 404, { error: result.error });
+      return;
+    }
+    if (status === "legitimate") {
+      await evaluateAndNotifyAchievements([result.report.user_id]);
+    }
+    debugLog("bug_report.closed", {
+      adminId: user.id,
+      adminUsername: user.username,
+      reportId: result.report.id,
+      reporterId: result.report.user_id,
+      status,
+    });
+    emitUsersEvent([user.id, result.report.user_id], "app.changed", {
+      reason: "bug_report.closed",
+      reportId: result.report.id,
+      status,
+    });
+    sendJson(res, 200, adminState());
+    return;
+  }
+
+  const bugReportBlock = url.pathname.match(/^\/api\/admin\/users\/([^/]+)\/bug-reports\/(block|unblock)$/);
+  if (req.method === "POST" && bugReportBlock) {
+    const result = await store.write((db) => {
+      const target = db.users.find((candidate) => candidate.id === bugReportBlock[1]);
+      if (!target) return { error: "not_found" };
+      target.bug_reports_blocked_at = bugReportBlock[2] === "block" ? nowIso() : null;
+      return { target };
+    });
+    if (result.error) {
+      sendJson(res, 404, { error: result.error });
+      return;
+    }
+    debugLog("bug_report.user_block_updated", {
+      adminId: user.id,
+      adminUsername: user.username,
+      targetId: result.target.id,
+      targetUsername: result.target.username,
+      blocked: Boolean(result.target.bug_reports_blocked_at),
+    });
+    emitUsersEvent([user.id, result.target.id], "app.changed", {
+      reason: "bug_report.user_block_updated",
+      userId: result.target.id,
+    });
+    sendJson(res, 200, adminState());
+    return;
+  }
+
   const createPasswordReset = url.pathname.match(/^\/api\/admin\/users\/([^/]+)\/password-reset$/);
   if (req.method === "POST" && createPasswordReset) {
     const target = store.db.users.find((candidate) => candidate.id === createPasswordReset[1]);
@@ -2420,6 +2546,9 @@ function adminState() {
       pwa_installed_at: user.pwa_installed_at,
       pwa_last_seen_at: user.pwa_last_seen_at,
       pwa_display_mode: user.pwa_display_mode || "unknown",
+      bug_reports_blocked_at: user.bug_reports_blocked_at || null,
+      bug_reports_open: (db.bug_reports || [])
+        .filter((report) => report.user_id === user.id && report.status === "open").length,
       push_subscription_count: db.push_subs.filter((sub) => sub.user_id === user.id).length,
       push_setup: db.push_subs.some((sub) => sub.user_id === user.id),
       friend_count: getAcceptedFriendIds(db, user.id).length,
@@ -2433,6 +2562,8 @@ function adminState() {
     config: db.config,
     notification_styles: notificationStyles(),
     achievements: achievementDefinitions(),
+    achievement_stats: adminAchievementStats(db),
+    bug_reports: adminBugReports(db),
     stats: {
       total_users: db.users.length,
       total_woods: db.woods.length,
@@ -2442,6 +2573,49 @@ function adminState() {
       ).length,
     },
   };
+}
+
+function adminAchievementStats(db) {
+  return achievementDefinitions().map((definition) => {
+    const stored = db.achievements_def.find((candidate) => candidate.slug === definition.slug);
+    const earned = stored
+      ? (db.achievements_earned || []).filter((entry) => entry.achievement_id === stored.id)
+      : [];
+    return {
+      ...definition,
+      earned_count: earned.length,
+      users: earned
+        .map((entry) => {
+          const user = db.users.find((candidate) => candidate.id === entry.user_id);
+          if (!user) return null;
+          return {
+            ...publicUser(user),
+            earned_at: entry.earned_at,
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => Date.parse(b.earned_at) - Date.parse(a.earned_at)),
+    };
+  });
+}
+
+function adminBugReports(db) {
+  return [...(db.bug_reports || [])]
+    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
+    .map((report) => {
+      const reporter = db.users.find((candidate) => candidate.id === report.user_id);
+      const closer = db.users.find((candidate) => candidate.id === report.closed_by);
+      return {
+        id: report.id,
+        text: report.text,
+        status: report.status || "open",
+        created_at: report.created_at,
+        closed_at: report.closed_at || null,
+        close_reason: report.close_reason || null,
+        user: publicUser(reporter),
+        closed_by: publicUser(closer),
+      };
+    });
 }
 
 function publicInvite(invite) {
@@ -2574,6 +2748,7 @@ function privateSettings(db, userId) {
   const user = db.users.find((candidate) => candidate.id === userId);
   return {
     notificationSnoozedUntil: user?.notification_snoozed_until || null,
+    bugReportsBlockedAt: user?.bug_reports_blocked_at || null,
     mutedFriends: (db.mutes || [])
       .filter((mute) => mute.muter_id === userId)
       .map((mute) => publicUser(db.users.find((candidate) => candidate.id === mute.muted_id)))
@@ -2663,6 +2838,12 @@ function cleanGroupName(value) {
   return name;
 }
 
+function cleanBugReportText(value) {
+  const text = String(value || "").trim().replace(/\r\n?/g, "\n").replace(/[ \t]+\n/g, "\n");
+  if (text.length < BUG_REPORT_MIN_LENGTH || text.length > BUG_REPORT_MAX_LENGTH) return "";
+  return text;
+}
+
 function clamp(value, min, max) {
   if (!Number.isFinite(value)) return min;
   return Math.max(min, Math.min(max, value));
@@ -2728,6 +2909,14 @@ function emitAllUsersEvent(event, payload = {}) {
   for (const user of store.db.users) {
     emitUserEvent(user.id, event, payload);
   }
+}
+
+function emitAdminAppChanged(reason, payload = {}) {
+  emitUsersEvent(
+    store.db.users.filter((user) => user.role === "admin").map((user) => user.id),
+    "app.changed",
+    { reason, ...payload },
+  );
 }
 
 function emitUserEvent(userId, event, payload = {}) {

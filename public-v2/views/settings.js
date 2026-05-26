@@ -37,13 +37,18 @@ export function renderSettings(ctx) {
       </div>
       ${settingsNavHtml()}
       ${notificationSheetHtml()}
+      ${state.showBugReportSheet ? bugReportSheetHtml(settings) : ""}
     </div>
   `;
 
   bindNotifications(ctx);
   document.querySelector("#logout-btn")?.addEventListener("click", logout);
   document.querySelector("#bug-btn")?.addEventListener("click", async () => {
-    await recordSettingsBit(ctx, "bug_report_submitted", "Bug report filed with absolutely no form.");
+    state.showBugReportSheet = true;
+    state.settingsError = "";
+    state.settingsNotice = "";
+    render();
+    setTimeout(() => document.querySelector("#bug-report-text")?.focus(), 50);
   });
   document.querySelector("#super-wood-btn")?.addEventListener("click", async () => {
     await recordSettingsBit(ctx, "super_wood_declined", "Transaction declined. Super Wood remains theoretical.");
@@ -80,6 +85,19 @@ export function renderSettings(ctx) {
       await unmuteFriend(ctx, btn.dataset.unmute);
     });
   });
+  document.querySelector("#bug-report-overlay")?.addEventListener("click", (event) => {
+    if (event.target.id === "bug-report-overlay") {
+      state.showBugReportSheet = false;
+      render();
+    }
+  });
+  document.querySelector("[data-close-bug-report]")?.addEventListener("click", () => {
+    state.showBugReportSheet = false;
+    render();
+  });
+  document.querySelector("#bug-report-form")?.addEventListener("submit", async (event) => {
+    await submitBugReport(ctx, event);
+  });
 }
 
 async function recordSettingsBit(ctx, type, notice) {
@@ -91,6 +109,28 @@ async function recordSettingsBit(ctx, type, notice) {
     });
     state.settingsError = "";
     state.settingsNotice = notice;
+    render();
+  } catch (err) {
+    state.settingsError = humanErr(err.message);
+    state.settingsNotice = "";
+    render();
+  }
+}
+
+async function submitBugReport(ctx, event) {
+  event.preventDefault();
+  const { api, render } = ctx;
+  const text = String(new FormData(event.currentTarget).get("text") || "");
+  state.bugReportText = text;
+  try {
+    state.data = await api("/api/bug-reports", {
+      method: "POST",
+      body: { text },
+    });
+    state.settingsError = "";
+    state.settingsNotice = "Bug report filed. A tiny clipboard has appeared somewhere.";
+    state.showBugReportSheet = false;
+    state.bugReportText = "";
     render();
   } catch (err) {
     state.settingsError = humanErr(err.message);
@@ -200,6 +240,42 @@ function mutedPanel(mutedFriends) {
         </div>
       `).join("") : `<p class="settings-empty">No one is muted. Everyone may approach the Wood.</p>`}
     </section>
+  `;
+}
+
+function bugReportSheetHtml(settings) {
+  if (settings.bugReportsBlockedAt) {
+    return `
+      <div class="sheet-overlay" id="bug-report-overlay">
+        <div class="sheet" id="bug-report-sheet">
+          <div class="sheet-title">Bug reports are closed</div>
+          <p class="sheet-copy">The bug hatch has been sealed for this account.</p>
+          <button class="btn-primary" type="button" data-close-bug-report>Understood</button>
+        </div>
+      </div>
+    `;
+  }
+  return `
+    <div class="sheet-overlay" id="bug-report-overlay">
+      <div class="sheet" id="bug-report-sheet">
+        <div class="sheet-title">Report a bug</div>
+        <form id="bug-report-form" autocomplete="off">
+          <div class="sheet-field">
+            <div class="field-label">What went wrong?</div>
+            <textarea
+              class="field-input field-textarea"
+              name="text"
+              id="bug-report-text"
+              maxlength="1200"
+              placeholder="A Wood did something structurally unsound..."
+              required
+            >${escHtml(state.bugReportText)}</textarea>
+          </div>
+          <div class="sheet-error">${escHtml(state.settingsError)}</div>
+          <button class="btn-primary" type="submit">Submit bug</button>
+        </form>
+      </div>
+    </div>
   `;
 }
 
