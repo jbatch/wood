@@ -154,9 +154,8 @@ async function sendHistoryWood(ctx, options = {}) {
   const { api, showToast } = ctx;
   const friendId = state.historyFriendId;
   const friend = currentHistoryFriend();
-  if (!friend?.wood?.canWood) {
-    const wait = friend?.wood?.cooldownExpiresAt ? countdown(friend.wood.cooldownExpiresAt) : "a bit";
-    showToast(`On cooldown for ${wait}`);
+  if (!friend?.wood?.canWood && !friend?.wood?.cooldownExpiresAt) {
+    showToast("Can't send Wood right now");
     return;
   }
 
@@ -246,7 +245,13 @@ function longHoldLabel(elapsed) {
 }
 
 async function finishLongHold(ctx, key, event) {
-  if (!longHold || longHold.key !== key || event.pointerId !== longHold.pointerId) return;
+  if (!longHold || longHold.key !== key || event.pointerId !== longHold.pointerId) {
+    if (event.button <= 0 && currentHistoryFriend()?.wood?.cooldownExpiresAt) {
+      event.preventDefault();
+      await sendHistoryWood(ctx);
+    }
+    return;
+  }
   event.preventDefault();
   const elapsed = performance.now() - longHold.startedAt;
   clearLongHold(key);

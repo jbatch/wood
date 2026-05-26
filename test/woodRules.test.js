@@ -659,6 +659,14 @@ test("achievement events unlock non-wood UI rituals", () => {
       meta_json: "{}",
       created_at: "2026-05-22T00:07:00.000Z",
     },
+    ...Array.from({ length: 10 }, (_, index) => ({
+      id: `event_cooldown_${index}`,
+      user_id: "a",
+      type: "cooldown_attempt",
+      subject_id: "b",
+      meta_json: "{}",
+      created_at: `2026-05-22T00:${String(10 + index).padStart(2, "0")}:00.000Z`,
+    })),
   );
   ensureAchievementDefinitions(db);
 
@@ -670,6 +678,7 @@ test("achievement events unlock non-wood UI rituals", () => {
   assert.ok(slugs.includes("self-control"));
   assert.ok(slugs.includes("mile-high-wood"));
   assert.ok(slugs.includes("unsolicited-wood"));
+  assert.ok(slugs.includes("bad-timing"));
   assert.ok(slugs.includes("qa-department"));
   assert.ok(slugs.includes("termite-inspector"));
 });

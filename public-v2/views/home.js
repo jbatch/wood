@@ -294,7 +294,7 @@ function groupCardHtml(group) {
     <div class="woodpile-card">
       <div class="woodpile-head">
         <div>
-          <div class="woodpile-kicker">${group.owner?.id === state.data?.user?.id ? "Your pile" : `${escHtml(group.owner?.username || "Someone")}'s pile`}</div>
+          <div class="woodpile-kicker">The Group Pile</div>
           <div class="woodpile-title">${escHtml(group.name)}</div>
         </div>
         <span class="woodpile-members">${group.members.length}</span>
@@ -485,6 +485,7 @@ function friendCardHtml(f) {
         id="fc-${f.id}"
         data-friend="${f.id}"
         data-can-wood="${canWood}"
+        data-on-cooldown="${isOnCooldown}"
         style="--tray-w: ${TRAY_W}px"
       >
         <div class="friend-left">

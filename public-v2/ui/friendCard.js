@@ -7,6 +7,7 @@ export function bindFriendCard(card, { mutate }) {
   const friendId = card.dataset.friend;
   if (!friendId) return;
   const canWood = card.dataset.canWood === "true";
+  const canAttemptWood = canWood || card.dataset.onCooldown === "true";
   const item = card.closest(".friend-item");
 
   let startX = 0, startY = 0, startTime = 0;
@@ -78,9 +79,11 @@ export function bindFriendCard(card, { mutate }) {
         snapClosed();
         return;
       }
-      if (!canWood) return;
-      card.classList.add("wood-sent");
-      card.addEventListener("animationend", () => card.classList.remove("wood-sent"), { once: true });
+      if (!canAttemptWood) return;
+      if (canWood) {
+        card.classList.add("wood-sent");
+        card.addEventListener("animationend", () => card.classList.remove("wood-sent"), { once: true });
+      }
       await mutate(`/api/friends/${friendId}/wood`, { holdMs: 0 });
     }
     card.classList.remove("swiping");
