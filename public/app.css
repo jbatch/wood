@@ -846,7 +846,7 @@ html, body {
   overflow-wrap: anywhere;
 }
 
-.woodpile-members {
+.woodpile-tier-badge {
   min-width: 32px;
   height: 32px;
   border-radius: var(--radius-pill);

@@ -279,6 +279,7 @@ function groupCardHtml(group) {
   const blocked = group.wood?.blockedReason;
   const rank = group.wood?.rank ? `#${group.wood.rank}` : "unranked";
   const stage = group.stats?.stage || { name: "Bare Patch", hint: "A place where Wood might happen." };
+  const tier = woodpileTierInfo(total);
   const buttonCopy = canDeposit
     ? `Deposit ${depositCost} Wood`
     : cooldown
@@ -293,7 +294,7 @@ function groupCardHtml(group) {
           <div class="woodpile-kicker">The Group Pile</div>
           <div class="woodpile-title">${escHtml(group.name)}</div>
         </div>
-        <span class="woodpile-members">${group.members.length}</span>
+        <span class="woodpile-tier-badge" title="Pile tier" aria-label="Pile tier ${tier.number}">${tier.number}</span>
       </div>
       <div class="pile-illustration" aria-hidden="true" style="${pileStyle(total)}">
         ${pileLogsHtml(total)}
@@ -332,17 +333,10 @@ function groupCardHtml(group) {
 }
 
 function woodpileProgressHtml(total) {
-  const tiers = [...(state.data?.groupSystem?.tiers || [])]
-    .sort((a, b) => Number(a.minWood || 0) - Number(b.minWood || 0));
+  const { tiers, current, next } = woodpileTierInfo(total);
   if (!tiers.length) return "";
 
   const wood = Number(total || 0);
-  const currentIndex = tiers.reduce((latest, tier, index) =>
-    wood >= Number(tier.minWood || 0) ? index : latest
-  , 0);
-  const current = tiers[currentIndex] || tiers[0];
-  const next = tiers[currentIndex + 1];
-
   if (!next) {
     return `
       <div class="woodpile-progress">
@@ -376,6 +370,30 @@ function woodpileProgressHtml(total) {
       <div class="woodpile-progress-note">${remaining} Wood to next tier</div>
     </div>
   `;
+}
+
+function woodpileTierInfo(total) {
+  const tiers = [...(state.data?.groupSystem?.tiers || [])]
+    .sort((a, b) => Number(a.minWood || 0) - Number(b.minWood || 0));
+  if (!tiers.length) {
+    return {
+      tiers,
+      current: { minWood: 0 },
+      next: null,
+      number: 1,
+    };
+  }
+
+  const wood = Number(total || 0);
+  const currentIndex = tiers.reduce((latest, tier, index) =>
+    wood >= Number(tier.minWood || 0) ? index : latest
+  , 0);
+  return {
+    tiers,
+    current: tiers[currentIndex] || tiers[0],
+    next: tiers[currentIndex + 1] || null,
+    number: currentIndex + 1,
+  };
 }
 
 function pileLogsHtml(total) {
