@@ -4,7 +4,6 @@ import zlib from "node:zlib";
 
 const outDirs = [
   path.join(process.cwd(), "public", "notifications"),
-  path.join(process.cwd(), "public-v2", "notifications"),
 ];
 const size = 512;
 

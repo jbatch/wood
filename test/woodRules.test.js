@@ -284,7 +284,7 @@ test("group tiers include rounded thresholds for every phase", () => {
   }
 });
 
-test("group stockpiles ignore woods received before the v2 migration", () => {
+test("group stockpiles ignore woods received before the group migration", () => {
   const db = dbWithWoods([
     {
       id: "wood_old",

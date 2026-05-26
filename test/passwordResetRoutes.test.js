@@ -30,7 +30,6 @@ async function startServerInstance(options = {}) {
       WOOD_DB_FILE: options.dbFile || path.join(dir, "wood.sqlite"),
       WOOD_DATA_FILE: options.dataFile || path.join(dir, "wood.json"),
       WOOD_SESSION_SECRET: "test-password-reset-secret",
-      WOOD_UI: "v2",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

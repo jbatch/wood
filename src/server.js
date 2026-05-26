@@ -75,7 +75,7 @@ import { debugEntries, debugLog, endpointHost } from "./debugLog.js";
 import { cleanUsername, isValidUsername, usernameKey } from "./usernames.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const publicDir = path.join(__dirname, "..", config.ui === "v2" ? "public-v2" : "public");
+const publicDir = path.join(__dirname, "..", "public");
 const store = await createStore();
 const realtimeClients = new Map();
 let realtimeEventId = 0;

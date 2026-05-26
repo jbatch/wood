@@ -23,11 +23,11 @@ The constraint that makes it interesting: you can't send someone another Wood un
 
 ### Current UI Direction
 
-- Build new product work in `public-v2` first, following the new dark green mobile-first aesthetic.
+- Build new product work in `public`, following the dark green mobile-first aesthetic.
 - Keep the app simple and thumb-friendly: one primary action per moment, compact text, and no desktop-first tables.
 - Use restrained, professional mobile animations: quick press feedback, smooth sheet/tray motion, and no decorative motion that slows the loop down.
 - Prefer the bottom icon tab tray pattern for top-level navigation, inspired by old Android/Material bottom menus without pulling in a UI framework.
-- Admin UI should follow the same v2 aesthetic instead of feeling like a separate back-office web page.
+- Admin UI should follow the same aesthetic instead of feeling like a separate back-office web page.
 
 ---
 
@@ -82,7 +82,7 @@ Admins are assigned manually (DB flag). There is no self-serve role escalation.
 - **Pending** — request sent, awaiting response
 - **Friends** — accepted
 - **Rejected** — declined (silent to sender, request disappears)
-- **Blocked** — supported in the backend, but no v2 UI is planned unless a real need appears
+- **Blocked** — supported in the backend, but no UI is planned unless a real need appears
 
 ### Actions on a Friend
 - **Wood** — send a Wood (subject to cooldown)

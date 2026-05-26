@@ -24,7 +24,6 @@ export const config = {
   vapidPrivateKey: process.env.WOOD_VAPID_PRIVATE_KEY || "",
   vapidSubject:
     process.env.WOOD_VAPID_SUBJECT || "mailto:admin@example.com",
-  ui: process.env.WOOD_UI || "v1",
   timeZone: process.env.WOOD_TIME_ZONE || "Australia/Perth",
   dev: ["1", "true", "yes"].includes(String(process.env.WOOD_DEV || "").toLowerCase()),
 };

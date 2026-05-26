@@ -2,7 +2,7 @@
 
 Wood is a private, invite-only PWA where each friend gets one button: `WOOD`.
 
-This repo is a small v1 implementation built to match the PRD:
+This repo is a small implementation built to match the PRD:
 
 - invite-only signup with single-use expiring invite links
 - username/password auth with long-lived signed sessions
