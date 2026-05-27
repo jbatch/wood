@@ -101,11 +101,10 @@ function drawBirthday(canvas) {
 }
 
 function drawBadge(canvas) {
-  background(canvas, "#000000");
-  circle(canvas, 48, 48, 42, "#ffffff");
-  roundedRect(canvas, 18, 38, 60, 22, 11, "#000000");
-  circle(canvas, 21, 49, 13, "#000000");
-  circle(canvas, 75, 49, 13, "#000000");
+  line(canvas, 22, 24, 32, 72, "#ffffff", 12);
+  line(canvas, 32, 72, 48, 42, "#ffffff", 12);
+  line(canvas, 48, 42, 64, 72, "#ffffff", 12);
+  line(canvas, 64, 72, 74, 24, "#ffffff", 12);
 }
 
 function createCanvas(width, height) {

@@ -1,4 +1,4 @@
-self.WOOD_SW_VERSION = "20260526-5";
+self.WOOD_SW_VERSION = "20260527-1";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(self.skipWaiting());
